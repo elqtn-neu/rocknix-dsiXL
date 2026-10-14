@@ -291,7 +291,12 @@ static void move(int d) {
 }
 
 /* up / down: to the next letter's first game (the previous one's), when the row is in name order */
-static double letter_t = -10;
+static double letter_t = -10, letter_in = -10;     /* last asked for; when the bubble came up */
+/* the letter bubble: up (or kept up) now. It pops in once, then stays while this keeps being called */
+static void letter_poke(void) {
+    if (T - letter_t > 0.8) letter_in = T;
+    letter_t = T;
+}
 static char initial(const Game *g) {
     for (const char *c = g->title; *c; c++) {
         if (isalpha((unsigned char)*c)) return (char)toupper((unsigned char)*c);
@@ -320,7 +325,7 @@ static void jump(int d) {
         i = j;
     }
     select_game(sys, i, 1);
-    letter_t = T;
+    letter_poke();
     rumble(10, 0.3f);
 }
 
@@ -806,12 +811,13 @@ static void draw_bottom(Surf *s, float intro) {
     float sby = 176 + (1 - ease_out_cubic(intro)) * 20;
     scroll_bar(s, (int)sby, vn(sys), vn(sys) ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
     /* the letter, in a bubble over the scroll bar, while jumping or dragging along it */
-    float lk = (float)(T - letter_t);
+    if (fabsf(row[sys].pos.v) > 6) letter_poke();      /* a flick coasting along */
+    float lk = (float)(T - letter_t), lin = (float)(T - letter_in);
     if (lk < 0.8f && vn(sys) && sys != V_FAV) {
         Game *lg0 = cur_game(sys);
         float bx = 26 + 204 * (vn(sys) > 1 ? row[sys].pos.x / (vn(sys) - 1) : 0.5f), byy = 150;
         bx = clampf(bx, 46, 210);                      /* (clear of the sun and gear buttons) */
-        float pk = ease_out_back(sat(lk / 0.15f)) * (1 - smoothstep(0.6f, 0.8f, lk));
+        float pk = ease_out_back(sat(lin / 0.15f)) * (1 - smoothstep(0.6f, 0.8f, lk));
         int la = (int)(255 * pk);
         Accent ac = accent();
         rrect(s, bx - 13 + 1, byy - 13 + 2, 26, 26, 8, 0x000000, la * 40 / 255);
@@ -2394,6 +2400,7 @@ static void touch_update(void) {
             if (dtt > 0.001) { tch.vel = lerpf(tch.vel, (float)(-(x - tch.lastx) / G.spacing / dtt), 0.5f); tch.lastx = (float)x; tch.lastt = T; }
             int n = CLAMP((int)roundf(row[sys].pos.x), 0, vn(sys) - 1);
             if (n != row[sys].sel) { select_game(sys, n, 1); rumble(7, 0.25f); }   /* a ratchet under the finger */
+            if (fabsf(tch.vel) > 4) letter_poke();          /* going fast: where you are, by letter */
         }
         if (tch.zone == 3 && tch.moved) {
             /* dragging the list */
@@ -2403,7 +2410,7 @@ static void touch_update(void) {
         if (tch.zone == 2 && vn(sys)) {
             int z, i = scroll_bar_hit(x, 176, vn(sys), 5, &z);
             if (!z && i >= 0 && i != row[sys].sel) { select_game(sys, i, 0); sfx(SFX_SCROLL); }
-            if (!z) letter_t = T;
+            if (!z) letter_poke();
         }
         tch.x = x; tch.y = y;
         return;
