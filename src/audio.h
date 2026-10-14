@@ -25,6 +25,8 @@ enum {
     SFX_PAGE,       /* page.wav     a page of a window, the album's pages */
     SFX_WAKE,       /* wake.wav     the lid opened, the screens back on */
     SFX_BRIGHT,     /* bright.wav   a brightness step */
+    SFX_IRIS_IN,    /* iris_in.wav  the screens closing onto the slot, into a game */
+    SFX_IRIS_OUT,   /* iris_out.wav the screens opening out of the slot, back from a game */
     SFX_COUNT
 };
 

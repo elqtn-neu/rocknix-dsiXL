@@ -38,6 +38,8 @@ VGMTrans or Tinke, then export WAV files.
 | `page.wav` | a window's page, the album's pages | the page-turn sound |
 | `wake.wav` | the lid opened, the screens back on | the open-lid sound |
 | `bright.wav` | a brightness step | the brightness change click |
+| `iris_in.wav` | the screens closing onto the slot, into a game (about half a second) | a falling run, a tick at the end |
+| `iris_out.wav` | the screens opening out of the slot, back from a game | a rising run, blooming |
 | `music.mp3` (or `music.wav`) | the menu's music, looped | the DSi Menu theme |
 
 - **Formats:** WAV (8, 16 or 24-bit PCM, or 32-bit float; mono or stereo; any sample rate) or MP3, under the same

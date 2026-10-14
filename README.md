@@ -41,10 +41,11 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   - The DSi's scroll bar along the bottom.
 - **Starting a game.** The cartridge squashes, jumps off the bottom screen and comes up into the top one with a
   full turn. It hangs, then **slams down into the card slot** that has risen at the bottom of the top screen:
-  the cartridge goes into the slot's slit with a thud, shake, dust, the power lamp. Then both screens fade to
-  black and stay black until the game draws: no flash, no terminal, no desktop in between.
-- **Back from a game.** Out of black, the cartridge pops out of the slot, drops through to the bottom screen and
-  lands back in its place.
+  the cartridge goes into the slot's slit with a thud, shake, dust, the power lamp. Then both screens close in on
+  it like an iris (the two screens as one picture), hold a beat around the cartridge, shut, and the last dot of
+  light goes out; black until the game draws: no flash, no terminal, no desktop in between.
+- **Back from a game.** A dot of light at the slot, the iris opens out of it across both screens, the cartridge
+  pops out of the slot, drops through to the bottom screen and lands back in its place.
 - **Brightness, the DSi's five steps.** Tap the sun in the bottom left corner. Both screens together; a DSi bar shows
   on the top screen. ROCKNIX's own Anbernic button + volume keeps working as it always does (installing with
   `--dsi-brightness` makes it step through the DSi's five levels instead).

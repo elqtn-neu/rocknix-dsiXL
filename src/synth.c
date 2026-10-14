@@ -230,7 +230,7 @@ int16_t *synth_sfx(int id, int *frames) {
         [SFX_BACK] = 0.6f, [SFX_BUMP] = 0.35f, [SFX_TAB] = 0.45f, [SFX_WHOOSH] = 0.6f, [SFX_OPEN] = 0.8f,
         [SFX_CONTINUE] = 1.6f, [SFX_SCROLL] = 0.15f, [SFX_ERROR] = 0.7f, [SFX_NOTCH] = 0.25f, [SFX_KEY] = 0.25f,
         [SFX_TOGGLE] = 0.5f, [SFX_CLOSE] = 0.6f, [SFX_STAR] = 1.4f, [SFX_DONE] = 1.6f, [SFX_PAGE] = 0.45f,
-        [SFX_WAKE] = 1.6f, [SFX_BRIGHT] = 0.4f,
+        [SFX_WAKE] = 1.6f, [SFX_BRIGHT] = 0.4f, [SFX_IRIS_IN] = 1.0f, [SFX_IRIS_OUT] = 1.2f,
     };
     if (id < 0 || id >= SFX_COUNT || LEN[id] <= 0) return 0;
     Buf b; b.n = (int)(LEN[id] * SYN_RATE); b.l = calloc((size_t)b.n, 4); b.r = calloc((size_t)b.n, 4);
@@ -341,6 +341,24 @@ int16_t *synth_sfx(int id, int *frames) {
         place(&b, V_EP, 0.12f, 72, 1.0f, 0.12f, 0.3f); place(&b, V_BELL, 0.18f, 88, 0.6f, 0.12f, 0.2f);
         wet = 0.35f;
         break;
+    case SFX_IRIS_IN: { /* into a game: a quick run falling with the closing circle, a breath, the dot's tick */
+        static const int n[] = { 91, 88, 84, 79, 76, 72 };
+        for (int i = 0; i < 6; i++) place(&b, V_GLASS, i * 0.065f, n[i], 0.12f, 0.15f - i * 0.015f, 0.4f - i * 0.16f);
+        place(&b, V_AIR, 0.05f, 260, 0.35f, 0.14f, 0);
+        place(&b, V_EP, 0.0f, 53, 0.5f, 0.10f, 0);
+        place(&b, V_CLICK, 0.60f, 3400, 0.001f, 0.18f, 0); place(&b, V_GLASS, 0.60f, 100, 0.05f, 0.10f, 0);
+        wet = 0.30f;
+        break;
+    }
+    case SFX_IRIS_OUT: { /* back: the run rising as the circle opens, a soft chord blooming under it */
+        static const int n[] = { 72, 76, 79, 84, 88, 91 };
+        place(&b, V_CLICK, 0, 3400, 0.001f, 0.14f, 0);
+        for (int i = 0; i < 6; i++) place(&b, V_GLASS, 0.04f + i * 0.055f, n[i], 0.14f, 0.07f + i * 0.015f, -0.4f + i * 0.16f);
+        place(&b, V_AIR, 0.02f, 300, 0.3f, 0.12f, 0);
+        place(&b, V_EP, 0.10f, 65, 0.7f, 0.09f, -0.2f); place(&b, V_EP, 0.14f, 72, 0.7f, 0.08f, 0.2f);
+        wet = 0.35f;
+        break;
+    }
     case SFX_BRIGHT:    /* a brightness step: a small glass tick (higher for brighter) */
         place(&b, V_GLASS, 0, 91, 0.06f, 0.18f, 0); place(&b, V_CLICK, 0, 3000, 0.001f, 0.08f, 0);
         wet = 0.12f;

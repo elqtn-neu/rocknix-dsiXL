@@ -118,6 +118,8 @@ static void gs_open_here(void);
 static Game *lg; static int l_sys, l_view; static int launched_file_written;
 /* the return from a game */
 static Game *rg; static int r_view; static double ret_t = -1;
+#define RET_D    0.10f      /* back from a game: the cartridge stays in its slot this long while the iris opens */
+#define RET_OPEN 0.62f      /* the iris all the way open */
 
 /* particles: dust from the slam, sparkles, confetti */
 enum { P_DUST, P_SPARK, P_CONFETTI };
@@ -2612,14 +2614,58 @@ static void sound_parts_slam(void) {
     for (int i = 0; i < 8; i++) spawn(0, 128 + ((int)(hash3(i, 9, 3) % 120) - 60), slot_open_y(1) - 6 - (hash3(i, 8, 3) % 30), 0, -10, 0.5f, -3, 0xffffff);
 }
 
+/* ---- the iris: into a game, both screens close down onto the cartridge in its slot; back from one, they open out
+ * of it. The two screens are one picture for it (the bottom one below the top, past the hinge), so the circle runs
+ * across both. It goes the classic way: in to a circle around the cartridge, a beat there, then shut, and the last
+ * dot of light goes out like an old TV's. Hard-edged on the DS's pixels, with a thin light rim inside its edge. ---- */
+#define IRIS_GAP 26         /* the hinge between the screens, in DS pixels */
+#define IRIS_FOCUS 34.0f    /* the circle around the cartridge (inside the top screen) */
+static float iris_cy(int sys) {
+    float cw, ch, cd; cart_size(sys, &cw, &ch, &cd);
+    float sc = (sys == SYS_NDS ? 92.0f : 128.0f) / cw;
+    float home = slot_open_y(1) + ch * sc * 0.42f - ch * sc * 0.5f;    /* the cartridge home in its slot */
+    return MIN((home - ch * sc * 0.5f + slot_open_y(1)) * 0.5f, 191 - IRIS_FOCUS * 1.12f);   /* the middle of what shows */
+}
+static float iris_full(float cy) { float dy = 192 + IRIS_GAP + 192 - cy; return sqrtf(130 * 130 + dy * dy); }
+static void iris_screen(Surf *s, float y0, float cx, float cy, float r, int rim) {
+    for (int y = 0; y < 192; y++) {
+        float dy = fabsf(y0 + y + 0.5f - cy);
+        if (dy >= r) { rectf(s, 0, y, 256, 1, 0x000000); continue; }
+        float h = sqrtf(r * r - dy * dy), hn = dy + 1 < r ? sqrtf(r * r - (dy + 1) * (dy + 1)) : 0;
+        int x0 = (int)roundf(cx - h), x1 = (int)roundf(cx + h), n0 = (int)roundf(cx - hn), n1 = (int)roundf(cx + hn);
+        if (x0 > 0) rectf(s, 0, y, MIN(x0, 256), 1, 0x000000);
+        if (x1 < 256) rectf(s, MAX(x1, 0), y, 256 - MAX(x1, 0), 1, 0x000000);
+        /* the rim: from this row's edge in to the next row's (so the flat top and bottom of the circle are solid) */
+        if (rim > 0 && x1 > x0) {
+            int lw = MAX(2, n0 - x0), rw = MAX(2, x1 - n1);
+            if (lw + rw >= x1 - x0) rect_blend(s, x0, y, x1 - x0, 1, 0xffffff, rim);
+            else { rect_blend(s, x0, y, lw, 1, 0xffffff, rim); rect_blend(s, x1 - rw, y, rw, 1, 0xffffff, rim); }
+        }
+    }
+}
+/* r < 0: shut; dot > 0: the last light, that size */
+static void iris(Surf *top, Surf *bot, float cy, float r, float dot) {
+    int rim = (int)(170 * clampf(r / 30, 0, 1));
+    iris_screen(top, 0, 128, cy, MAX(r, 0), rim);
+    iris_screen(bot, 192 + IRIS_GAP, 128, cy, MAX(r, 0), rim);
+    if (dot > 0.05f) { disc(top, 128, cy, dot, 0xffffff, 255); disc(top, 128, cy, dot * 2.2f, 0xffffff, 60); }
+}
+/* the radius closing, k 0..1: in to the cartridge, a beat there, then shut */
+static float iris_close_r(float k, float full) {
+    if (k < 0.55f) return lerpf(full, IRIS_FOCUS, ease_in_out(k / 0.55f));
+    if (k < 0.78f) return lerpf(IRIS_FOCUS, IRIS_FOCUS * 0.86f, ease_out_cubic((k - 0.55f) / 0.23f));
+    return IRIS_FOCUS * 0.86f * (1 - ease_in_cubic((k - 0.78f) / 0.22f));
+}
+
 /* ---- the launch: timeline (seconds) ---- */
 #define L_SQUASH 0.10f
 #define L_UP     0.36f      /* off the top of the bottom screen */
 #define L_APEX   0.66f      /* risen to the top of the top screen */
 #define L_HANG   0.80f
 #define L_SLAM   0.93f      /* home */
-#define L_FADE   1.40f      /* then both screens to black */
-#define L_END    1.90f
+#define L_IRIS   1.16f      /* then the screens close onto it */
+#define L_SHUT   1.76f
+#define L_END    1.98f      /* (the last dot out, a moment of black: the game takes the screens from black) */
 
 static void launch_draw(Surf *top, Surf *bot, float t) {
     float cw, ch, cd; cart_size(l_sys, &cw, &ch, &cd);
@@ -2797,8 +2843,8 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         if (logo_prev && lk < 0.14f) draw_logo(top, logo_prev, 1 - lk / 0.14f, 1 - 0.1f * lk / 0.14f, lk * 30, cfg.top_view);
         float ka = clampf((lk - 0.06f) / 0.3f, 0, 1);
         float sc = 0.8f + 0.2f * ease_out_back(ka);
-        if (rg && ret_t >= 0 && ret_t < 0.9) ka = 0;            /* coming back: the logo after the cartridge */
-        else if (rg && ret_t >= 0.9) ka = MIN(ka, ease_out_cubic((float)(ret_t - 0.9) / 0.3f));
+        if (rg && ret_t >= 0 && ret_t < 0.9 + RET_D) ka = 0;            /* coming back: the logo after the cartridge */
+        else if (rg && ret_t >= 0.9 + RET_D) ka = MIN(ka, ease_out_cubic((float)(ret_t - 0.9 - RET_D) / 0.3f));
         /* X: the view that's going shrinks away, the new one pops in */
         float vk = (float)(T - view_t) / 0.34f;
         if (vk < 1) {
@@ -2839,8 +2885,10 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         /* back from a game: the cartridge comes up out of the slot, drops off the bottom of the top screen and lands
          * in its place in the row */
         if (rg && ret_t >= 0) {
+            if (ret_t == 0) { sfx(SFX_IRIS_OUT); rumble(20, 0.4f); }
             ret_t += dt;
-            float t = (float)ret_t, cw, ch, cd; cart_size(rg->sys, &cw, &ch, &cd);
+            /* (the cartridge waits in its slot while the iris opens onto it) */
+            float t = (float)ret_t - RET_D, cw, ch, cd; cart_size(rg->sys, &cw, &ch, &cd);
             float sc = (rg->sys == SYS_NDS ? 92.0f : 128.0f) / cw, home = slot_open_y(1) + ch * sc * 0.42f - ch * sc * 0.5f;
             float rise = 1 - ease_in_cubic(clampf((t - 0.55f) / 0.3f, 0, 1));
             CartPose p; memset(&p, 0, sizeof p); p.sx = 128; p.alpha = 1; p.bright = 1.05f; p.scale = sc;
@@ -2887,17 +2935,23 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         float k = (float)((st_t - intro_t) / 0.35);
         if (k < 1) { rect_blend(top, 0, 0, 256, 192, 0xffffff, (int)(255 * (1 - k))); rect_blend(bot, 0, 0, 256, 192, 0xffffff, (int)(255 * (1 - k))); }
     }
-    if (rg && ret_t >= 0 && ret_t < 0.4) {
-        /* back from the game: out of black */
-        int a = (int)(255 * (1 - ease_in_out((float)(ret_t / 0.4))));
-        rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
+    if (rg && ret_t >= 0 && ret_t < RET_OPEN) {
+        /* back from the game: a dot of light at the slot, then the iris opens out of it */
+        float t = (float)ret_t, cy = iris_cy(rg->sys), r, dot = 0;
+        if (t < 0.08f) { r = -1; dot = 0.5f + 3 * ease_out_cubic(t / 0.08f); }
+        else if (t < 0.2f) r = IRIS_FOCUS * ease_out_back((t - 0.08f) / 0.12f);
+        else if (t < 0.3f) r = lerpf(IRIS_FOCUS, IRIS_FOCUS * 1.12f, (t - 0.2f) / 0.1f);
+        else r = lerpf(IRIS_FOCUS * 1.12f, iris_full(cy), ease_in_out((t - 0.3f) / (RET_OPEN - 0.3f)));
+        iris(top, bot, cy, r, dot);
     }
     if (state == ST_LAUNCH) {
         float t = (float)st_t;
-        if (t > L_FADE) {
-            /* to black, held a moment: the game takes the screens from black, so there is no seam */
-            int a = (int)(255 * ease_in_out((t - L_FADE) / (L_END - 0.12f - L_FADE)));
-            rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
+        if (t >= L_IRIS - 0.04f && t - dt < L_IRIS - 0.04f) sfx(SFX_IRIS_IN);
+        if (t > L_IRIS) {
+            float cy = iris_cy(l_sys), k = (t - L_IRIS) / (L_SHUT - L_IRIS);
+            float d = (t - L_SHUT) / 0.14f;            /* the dot: a flash, then out */
+            iris(top, bot, cy, k < 1 ? iris_close_r(k, iris_full(cy)) : -1, d >= 0 && d < 1 ? 3.0f * (1 - d * d) : 0);
+            if (t >= L_SHUT && t - dt < L_SHUT) rumble(25, 0.5f);
         }
         if (t >= L_END) { write_launch(); job_stop(&artjob); return EXIT_LAUNCH; }
     }
