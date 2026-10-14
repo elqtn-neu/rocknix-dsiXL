@@ -1,0 +1,17 @@
+name: build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu libdrm-dev libsdl2-dev
+      - run: sh build.sh && sh build.sh aarch64
+      - name: headless smoke test
+        run: |
+          mkdir -p t/roms/nds t/roms/gba t/home && ln -s $PWD/assets t/home/assets
+          printf 'nds_roms = %s\ngba_roms = %s\n' $PWD/t/roms/nds $PWD/t/roms/gba > t/home/config.ini
+          : > "t/roms/nds/Test Game (USA).nds"
+          DSIXL_HOME=$PWD/t/home ./build/dsixl --backend headless --seconds 6 --script "2:A,3:RIGHT,4:A"; test $? = 10
+      - uses: actions/upload-artifact@v4
+        with: { name: dsixl-aarch64, path: build/dsixl-aarch64 }
