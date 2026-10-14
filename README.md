@@ -15,8 +15,11 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 
 ## What it does
 
-- **Boot.** Black to white, the DS logo and its chime on the top screen, the health and safety screen on the
-  bottom, "Touch the Touch Screen to continue." pulsing. A touch or any button, then the menu slides in from white.
+- **Start-up, as the DSi XL's.** Both screens come up out of black together: the logo on the top screen, the health
+  and safety screen on the bottom, the start-up chime. "Touch the Touch Screen to continue." fades in and breathes.
+  Only a touch continues, as on the DSi (buttons too after 12 seconds, so a touchscreen that doesn't answer can't
+  lock you out). The bottom screen goes white, then the top, and the menu slides in. **Hold A** through it to go
+  straight on into the game you played last.
 - **Top screen.**
   - The DSi's status bar: the speaker, the date, the time with its blinking colon, the battery.
   - The DSi's grey stripes with a faint drifting diamond pattern.
@@ -35,9 +38,34 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   - The DSi's scroll bar along the bottom.
 - **Starting a game.** The cartridge squashes, jumps off the bottom screen and comes up into the top one with a
   full turn. It hangs, then **slams down into the card slot** that has risen at the bottom of the top screen:
-  the cartridge goes into the slot's slit with a thud, shake, dust, the power lamp. Then white, as the DSi does, and the game.
-- **Back from a game.** The cartridge pops out of the slot, drops through to the bottom screen and lands back in
-  its place.
+  the cartridge goes into the slot's slit with a thud, shake, dust, the power lamp. Then both screens fade to
+  black and stay black until the game draws: no flash, no terminal, no desktop in between.
+- **Back from a game.** Out of black, the cartridge pops out of the slot, drops through to the bottom screen and
+  lands back in its place.
+- **Brightness, the DSi's five steps.** Hold the Anbernic button and press volume up/down (in the menu and in
+  games), or tap the sun in the bottom left corner. Both screens together; a DSi bar shows on the top screen.
+- **Saving the battery.** After 30 seconds untouched the menu draws at 30 frames a second; after 2 minutes the
+  screens dim, after 5 they go off (`dim_after`, `screen_off_after` in `config.ini`). The first touch or button
+  only wakes them. Closing the lid sleeps (ROCKNIX's own suspend); opening it, the menu comes back out of black.
+- **The battery.** A notice on the top screen at 15% and 5% (with a chime) and when the charger goes in. In a
+  game, at 3% the game is saved and closed for you (the exit hotkey's way: DraStic's resume state, RetroArch's
+  save), and the menu says so.
+- **Your saves are backed up** after every game: a copy of the save in `roms/dsixl/backups/<nds|gba>/<game>/`
+  when it changed, the last 5 kept.
+- **When a game can't start**, the menu says why in a DSi-style window instead of quietly coming back.
+- **Order and finding.** Options > Order: by name, recently played, most played. In name order, up/down jump to
+  the next letter, a bubble with the letter over the scroll bar (dragging the scroll bar shows it too).
+  Options > Hide this game takes one out of the rows (Options > Show hidden brings them back, faded).
+- **New games** wear a red NEW tag until you first play them. Games copied onto the card while the menu is up
+  show up by themselves.
+- **Play time.** The photo view (X) says how long you've played a game and when you last did.
+- **Resume points.** A green play mark on cartridges with a resume point. Continue shows the picture of where you
+  left off when there is one (RetroArch's resume state picture).
+- **Album** (Options): your screenshots (`roms/screenshots`) in a DSi Camera-style grid, big on the top screen, with
+  a slideshow (A). A game's own screenshots also take turns in its photo frame.
+- **Volume:** the volume keys show a DSi volume bar on the top screen.
+- **The time of day** colours the top screen's light: a warm morning, a golden late afternoon, a violet dusk, a
+  blue night.
 - **Tactile navigation.** A press lands in about a tenth of a second, and the selection locks into its frame like a
   detent: a click, a squeeze of the frame, a short buzz of the vibration motor. Holding left/right glides along
   the row, faster and faster, and settles on the next cartridge when you let go. A flick coasts on, ticking past
@@ -58,14 +86,29 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 | | |
 |---|---|
 | Left / Right | the previous / next game (hold: a glide that speeds up) |
-| Up / Down | five games back / on |
+| Up / Down | the previous / next letter (in name order; else five games back / on) |
 | L / R | the tabs: NDS, ★ Favorites (the middle one, where the menu opens), GBA |
-| SELECT (or the gear, bottom right) | the selected game's settings |
+| SELECT (or the gear, bottom right) | the emulator settings (for all DS games, all GBA games) |
+| Anbernic button + volume up/down (or the sun, bottom left) | brightness, five steps |
 | A (or tap the selected cartridge) | start it (on release: the cartridge sinks in while held) |
 | X | the top screen: the logo, or the photo view |
 | Y | a favourite, or not (a gold star on the cartridge) |
-| START | Options: colour, clock, sound effects, music, vibration, look for new games, exit to EmulationStation, power off |
-| B | close the options |
+| START | Options (below) |
+| B | close a window |
+
+**Options** (START): Emulator settings, Order, Hide this game, Show hidden, Album, Get art from the internet, Wi-Fi,
+Time zone, Color, Clock, Sound effects, Music, Vibration, Controls in games, Look for new games, Exit to
+EmulationStation, Power off; *Update to x.y.z* at the top when a newer release is on the card. Its last line shows
+the battery (and the time it has left) and the games card's free space.
+- **Wi-Fi:** the networks around (signal, padlock, the one you're on); a DSi-style touch keyboard for the
+  password (keys on the bottom screen, what you type on the top one; the d-pad and A work too, B deletes, START is
+  OK). It joins through ROCKNIX's own Wi-Fi tool, so EmulationStation sees the same network; the clock is set from
+  the internet when it joins.
+- **Time zone:** the part of the world, then the city.
+- **Get art from the internet:** the art script with a progress window; each cartridge jumps when its art
+  arrives. B lets it carry on in the background (a small mark turns in the top screen's corner).
+- **Controls in games:** how to leave a game (L + SELECT + START), save and load. Also shown once before your
+  first DS game and your first GBA game.
 
 **Favorites** are a tab of their own, the middle one, and the menu opens on it:
 - Its own look in the same DSi style: warm cream paper with little stars, a white lacquered shelf with a gold edge
@@ -77,17 +120,19 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   on or off, and favourites stay in their alphabetical places, marked in gold on the scroll bar.
 - Kept in `/storage/.config/dsixl/favorites.txt` (a line per game, `NDS<tab>file name`, in the order added).
 
-**Game settings** (SELECT, or tap the gear): each game's emulator options, in a window on the bottom screen.
+**Emulator settings** (SELECT, or tap the gear): the emulators' options for every game, a page for DS and one for
+GBA (L/R), in a window on the bottom screen.
 - Up/Down picks an option, Left/Right (or the arrows) changes it, the top screen says what the option does and
   what the choice does.
-- The recommended choice of each option has a little gold star; **Recommended** puts them all back. **Play**
-  starts the game with them; B keeps them and closes.
+- The recommended choice of each option (the best balance of looks, speed and battery on this handheld) has a
+  little gold star; **Recommended** puts the page back to them. **Done** (or B) keeps them.
 - DS (ROCKNIXDS's DraStic): Screen (Crisp pixels, Pixel grid, Crisp with DS colors, Smooth, Pixel-perfect),
   Performance (Battery saver, Balanced, Max performance), 3D quality (2x, 3x), 3D textures, 3D engine, Resume.
 - GBA (RetroArch): Emulator (mGBA, gpSP), Screen size (Pixel-perfect, Fill screen), Screen (Sharp, Smooth), Resume,
   Rewind, Response (run-ahead).
-- They're written to ROCKNIX's `system.cfg` as that game's own settings (`nds["<file>"].shader=ds-crisp`), the
-  same keys EmulationStation uses: the game starts with them, and EmulationStation shows them too.
+- They're written to ROCKNIX's `system.cfg` as the system's settings (`nds.shader=ds-crisp`), the same keys
+  EmulationStation uses, so EmulationStation shows them too. (A game's own setting made in EmulationStation still
+  wins for that game.)
 
 No emulator is bundled: the menu starts the ones on the handheld (ROCKNIXDS's DraStic for DS, ROCKNIX's RetroArch
 for GBA).
@@ -119,9 +164,13 @@ games (it's mounted at `/storage/games-external`, its `roms` shown at `/storage/
 haven't set any (yours are never changed), makes the menu the start screen, and opens it. The log is
 `/storage/dsixl-install.log`.
 
-**5. Art (optional, Wi-Fi):** connect to Wi-Fi in EmulationStation first, then over ssh, or later from a computer
-with the games card: `python3 /storage/.config/dsixl/dsixl-scrape.py`. It goes onto the games card
+**5. Wi-Fi, time zone and art:** in the menu, *Options > Wi-Fi* (pick your network, type the password),
+*Options > Time zone*, then *Options > Get art from the internet*. The art goes onto the games card
 (`roms/dsixl/media`).
+
+**Updating later:** no reflash, no ssh. Copy the new `dsixl-x.y.z.zip` itself (not unpacked) into the games card's
+`roms/ports` folder (or its top folder). The menu says *Update x.y.z ready*; *Options > Update to x.y.z* installs
+it and the menu starts again on the new version.
 
 **Safe ways back:**
 - *Options > Exit to EmulationStation*: EmulationStation until the next boot.
@@ -177,7 +226,8 @@ Put the DSi's sounds (your own copies) in `/storage/roms/dsixl/sounds`: `boot.wa
 
 - `config.ini`: your colour (`color`, the DS's 16 favourite colours: the selection frame, the
   tabs, the scroll bar, the title logos follow it), 12/24-hour clock, the boot screen (`boot_splash`, and
-  `boot_wait = n` to continue by itself after n seconds), the ROM, art and sound folders.
+  `boot_wait = n` to continue by itself after n seconds), when the screens dim and go off (`dim_after`,
+  `screen_off_after`, seconds; 0 never), the ROM, art and sound folders.
 - `assets/boot_logo.png`: the boot logo is an approximation drawn by `tools/gen_assets.py`. Replace it with your
   own transparent PNG (about 216x32) to have the real one.
 - The look lives in `src/widgets.c` (the DSi furniture, colours sampled from the DSi), `src/ui.c` (layout,
@@ -192,7 +242,8 @@ sh build.sh aarch64    # the handheld: build/dsixl-aarch64 (apt install gcc-aarc
 
 C, no dependencies to link: libdrm, ALSA and SDL2 are opened at run time. `bin/dsixl-aarch64` is a prebuilt copy;
 the installer uses `build/` first. Pictures without a display:
-`./build/dsixl --backend headless --record out/ --seconds 8 --script "2:A,4:RIGHT"` writes every frame as PNG.
+`./build/dsixl --backend headless --record out/ --seconds 8 --script "1:TOUCH@128x100,4:RIGHT"` writes every frame
+as PNG.
 
 Hardware notes and how the menu fits in 1 GB: [docs/hardware.md](docs/hardware.md).
 Third-party code and fonts: [THIRD_PARTY.md](THIRD_PARTY.md).

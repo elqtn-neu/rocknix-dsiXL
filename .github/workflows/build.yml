@@ -12,6 +12,7 @@ jobs:
           mkdir -p t/roms/nds t/roms/gba t/home && ln -s $PWD/assets t/home/assets
           printf 'nds_roms = %s\ngba_roms = %s\n' $PWD/t/roms/nds $PWD/t/roms/gba > t/home/config.ini
           : > "t/roms/nds/Test Game (USA).nds"
-          DSIXL_HOME=$PWD/t/home ./build/dsixl --backend headless --seconds 8 --script "1:TOUCH@128x100,3:L,4:A,5:A"; test $? = 10
+          rc=0; DSIXL_HOME=$PWD/t/home ./build/dsixl --backend headless --seconds 8 --script "1:TOUCH@128x100,3:L,4:A,5:A" || rc=$?
+          test $rc = 10   # 10: it asked for the game to be launched
       - uses: actions/upload-artifact@v4
         with: { name: dsixl-aarch64, path: build/dsixl-aarch64 }
