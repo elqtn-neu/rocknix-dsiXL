@@ -103,14 +103,22 @@ ROMs: `/storage/roms/nds` and `/storage/roms/gba` (set in `/storage/.config/dsix
 python3 /storage/.config/dsixl/dsixl-scrape.py      # on the handheld (Wi-Fi), or on a computer with --nds/--gba/--media
 ```
 
-No account and no key needed:
+No account and no key needed. The **LaunchBox Games Database** comes first, for everything it has: its public
+database (`Metadata.zip`, downloaded once a month into `media/.launchbox/` and read as a stream, so it fits in the
+handheld's memory) lists each game's images, matched to your ROMs by name (alternate names too), your ROM's region
+first:
 
-| | Nintendo DS | Game Boy Advance |
-|---|---|---|
-| Box art (on the cartridge's label) | GameTDB covers by the game code in the ROM, else libretro-thumbnails | libretro-thumbnails |
-| Cartridge scans (the whole cartridge face) | GameTDB, where it has one | – |
-| Title logo (top screen) | none free: the title screen carries it | libretro-thumbnails (Named_Logos) |
-| Title screen and screenshot (the top screen's photo) | libretro-thumbnails | libretro-thumbnails |
+| LaunchBox image | Used as |
+|---|---|
+| Cart - Front | the cartridge's whole face (a real scan) |
+| Box - Front | the box (cropped to a label when there's no cartridge scan) |
+| Clear Logo | the top screen's logo |
+| Screenshot - Gameplay | the photo view, with the logo under it |
+| Screenshot - Game Title | the photo view, for games without a logo |
+
+What LaunchBox doesn't have comes from GameTDB (DS covers and cartridge scans, by the game code in the ROM) and
+libretro-thumbnails (box art, title screens, screenshots, GBA logos). `--no-launchbox` skips LaunchBox;
+`--refresh-launchbox` downloads its database again now.
 
 Your own art always wins. Drop files in `/storage/roms/dsixl/media/<nds|gba>/<box|cart|label|logo|title|snap>/<ROM name
 without extension>.png` (or `.jpg`): a `cart` is a scan of the real cartridge (used as its whole face), a `label`

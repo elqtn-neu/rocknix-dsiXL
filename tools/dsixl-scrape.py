@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""dsixl-scrape.py: fetches the art for the menu, from sources that need no account and no key:
+"""dsixl-scrape.py: fetches the art for the menu, from sources that need no account and no key.
+
+First the LaunchBox Games Database (gamesdb.launchbox-app.com): its public Metadata.zip (updated daily, downloaded
+once and kept for a month in <media>/.launchbox/) lists every game's images, which are on images.launchbox-app.com:
+  Cart - Front              -> cart   (the whole face of the cartridge)
+  Box - Front               -> box    (cropped by the menu to a label when there is no cartridge scan)
+  Clear Logo                -> logo   (the top screen)
+  Screenshot - Gameplay     -> snap   (the photo view, under a logo)
+  Screenshot - Game Title   -> title  (the photo view, without one)
+Games are matched by name (the ROM's No-Intro name against LaunchBox's names and alternate names), the region of the
+ROM preferred. Whatever LaunchBox doesn't have comes from:
 
   box art   DS: GameTDB (art.gametdb.com, by the game code in the ROM's header), else libretro-thumbnails
             GBA: libretro-thumbnails (github.com/libretro-thumbnails, by No-Intro file name)
@@ -18,7 +28,8 @@ Only the Python standard library.
     python3 dsixl-scrape.py --nds /path/nds --gba /path/gba --media /path/media
     python3 dsixl-scrape.py --force               # fetch again what's there
 """
-import argparse, json, os, re, struct, sys, time, threading, urllib.request, urllib.parse
+import argparse, json, os, re, struct, sys, time, threading, urllib.request, urllib.parse, zipfile
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
 LIBRETRO = {'nds': 'Nintendo_-_Nintendo_DS', 'gba': 'Nintendo_-_Game_Boy_Advance'}
@@ -148,6 +159,160 @@ class Libretro:
         return b if is_image(b) else None
 
 
+LB_ZIP = os.environ.get('DSIXL_LB_ZIP_URL', 'https://gamesdb.launchbox-app.com/Metadata.zip')
+LB_IMG = os.environ.get('DSIXL_LB_IMG_URL', 'https://images.launchbox-app.com/')
+LB_PLATFORM = {'nds': 'Nintendo DS', 'gba': 'Nintendo Game Boy Advance'}
+LB_KINDS = {'Cart - Front': 'cart', 'Box - Front': 'box', 'Clear Logo': 'logo',
+            'Screenshot - Gameplay': 'snap', 'Screenshot - Game Title': 'title'}
+# a ROM's region tag -> LaunchBox's region names, best first ('' is LaunchBox's "no region")
+LB_REGION = {'USA': ['North America', 'United States', 'World', ''], 'Europe': ['Europe', 'United Kingdom', 'World', ''],
+             'Japan': ['Japan', 'World', ''], 'World': ['World', '', 'North America', 'Europe'],
+             'Australia': ['Australia', 'Europe', 'World', ''], 'Korea': ['Korea', 'World', '']}
+
+
+def download_to(url, path):
+    """a big file, in pieces, with a progress line; resumed into a .part"""
+    tmp = path + '.part'
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': UA})
+        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as f:
+            total = int(r.headers.get('Content-Length') or 0); got = 0; last = 0
+            while True:
+                b = r.read(1 << 20)
+                if not b:
+                    break
+                f.write(b); got += len(b)
+                if time.time() - last > 2:
+                    last = time.time()
+                    log('  LaunchBox database: %d MB%s' % (got >> 20, ' of %d MB' % (total >> 20) if total else ''))
+        os.replace(tmp, path)
+        return True
+    except Exception as e:
+        log('  LaunchBox database: download failed (%s)' % e)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+class LaunchBox:
+    """The games of our two systems and their images, from LaunchBox's Metadata.xml. The XML is several hundred MB:
+    it is read as a stream straight out of the zip (twice: the games first, then their images), never whole, so this
+    runs in the handheld's 1 GB. The result is kept as a small JSON index beside the zip."""
+
+    def __init__(self, media, systems, refresh=False):
+        self.games = {}                     # sysname -> {norm name: [entry]}; entry: {'name', 'images': {kind: [(region, file)]}}
+        d = os.path.join(media, '.launchbox'); os.makedirs(d, exist_ok=True)
+        zp, ip = os.path.join(d, 'Metadata.zip'), os.path.join(d, 'index.json')
+        fresh = os.path.exists(zp) and time.time() - os.path.getmtime(zp) < 30 * 86400 and not refresh
+        if fresh and os.path.exists(ip) and os.path.getmtime(ip) >= os.path.getmtime(zp):
+            try:
+                self.games = json.load(open(ip))
+                if all(s in self.games for s in systems):
+                    return
+            except Exception:
+                pass
+        if not fresh:
+            log('  LaunchBox database: downloading (once a month)')
+            if not download_to(LB_ZIP, zp) and not os.path.exists(zp):
+                return
+        log('  LaunchBox database: reading (a minute or two)')
+        try:
+            self.games = self._read(zp)
+            json.dump(self.games, open(ip, 'w'))
+        except Exception as e:
+            log('  LaunchBox database: unreadable (%s)' % e)
+            self.games = {}
+
+    @staticmethod
+    def _stream(zp):
+        z = zipfile.ZipFile(zp)
+        name = next((n for n in z.namelist() if n.lower().endswith('metadata.xml')), None)
+        if not name:
+            raise ValueError('no Metadata.xml in the zip')
+        f = z.open(name)
+        root, depth = None, 0
+        for ev, el in ET.iterparse(f, events=('start', 'end')):
+            if ev == 'start':
+                if root is None:
+                    root = el
+                depth += 1
+                continue
+            depth -= 1
+            if depth == 1:                  # a record (<Game>, <GameImage>...) is complete
+                yield el
+                el.clear()
+                try:
+                    root.remove(el)         # done with it: memory stays flat
+                except ValueError:
+                    pass
+
+    def _read(self, zp):
+        want = {v: k for k, v in LB_PLATFORM.items()}
+        ids = {}                            # DatabaseID -> (sysname, entry)
+        out = {s: {} for s in LB_PLATFORM}
+        for el in self._stream(zp):         # pass 1: the games, and their other names
+            if el.tag == 'Game':
+                sysname = want.get((el.findtext('Platform') or '').strip())
+                if sysname:
+                    gid, name = (el.findtext('DatabaseID') or '').strip(), (el.findtext('Name') or '').strip()
+                    if gid and name:
+                        e = {'name': name, 'images': {}}
+                        ids[gid] = (sysname, e)
+                        out[sysname].setdefault(norm(name), []).append(e)
+            elif el.tag == 'GameAlternateName':
+                gid = (el.findtext('DatabaseID') or '').strip()
+                if gid in ids:
+                    sysname, e = ids[gid]
+                    alt = (el.findtext('AlternateName') or '').strip()
+                    if alt and e not in out[sysname].setdefault(norm(alt), []):
+                        out[sysname][norm(alt)].append(e)
+        n = 0
+        for el in self._stream(zp):         # pass 2: their images
+            if el.tag == 'GameImage':
+                gid = (el.findtext('DatabaseID') or '').strip()
+                kind = LB_KINDS.get((el.findtext('Type') or '').strip())
+                if kind and gid in ids:
+                    fn = (el.findtext('FileName') or '').strip()
+                    if fn:
+                        ids[gid][1]['images'].setdefault(kind, []).append([(el.findtext('Region') or '').strip(), fn])
+                        n += 1
+        log('  LaunchBox database: %d DS and %d GBA games, %d images of the kinds wanted' %
+            (len({id(e) for v in out['nds'].values() for e in v}), len({id(e) for v in out['gba'].values() for e in v}), n))
+        return out
+
+    def find(self, sysname, base):
+        """the game for a ROM name, and the regions to prefer"""
+        cands = self.games.get(sysname, {}).get(norm(base), [])
+        if not cands:
+            # "Title - Subtitle" vs "Title: Subtitle" and the like differ only in punctuation, which norm() drops;
+            # also try without a trailing subtitle
+            t = re.sub(r'\s*[\(\[].*$', '', base)
+            if ' - ' in t:
+                cands = self.games.get(sysname, {}).get(norm(t.split(' - ')[0]), [])
+        if not cands:
+            return None, []
+        tags = re.findall(r'\(([^)]*)\)', base)
+        regions = []
+        for t in tags:
+            for part in t.split(','):
+                regions += LB_REGION.get(part.strip(), [])
+        regions += ['North America', 'World', '', 'Europe', 'Japan']
+        # several games of the same name (rare): the one with the most images
+        e = max(cands, key=lambda c: sum(len(v) for v in c['images'].values()))
+        return e, regions
+
+    def fetch(self, entry, regions, kind):
+        imgs = entry['images'].get(kind) or []
+        order = sorted(imgs, key=lambda r: regions.index(r[0]) if r[0] in regions else len(regions))
+        for region, fn in order[:3]:
+            b = get(LB_IMG + urllib.parse.quote(fn), tries=2)
+            if is_image(b):
+                return b
+        return None
+
+
 def nds_code(path):
     if not path.lower().endswith(('.nds', '.dsi', '.ids', '.srl')):
         return None
@@ -177,9 +342,18 @@ def save(media, sysname, kind, base, data):
     os.replace(tmp, os.path.join(d, base + ext))
 
 
-def scrape_game(sysname, path, media, lr, force, stats):
+def scrape_game(sysname, path, media, lr, force, stats, lb=None):
     base = os.path.splitext(os.path.basename(path))[0]
     got = []
+    # LaunchBox first: everything it has for the game
+    if lb and lb.games:
+        entry, regions = lb.find(sysname, base)
+        if entry:
+            for kind, what in (('cart', 'cartridge scan'), ('box', 'box'), ('logo', 'logo'), ('snap', 'screenshot'), ('title', 'title screen')):
+                if force or not have(media, sysname, kind, base):
+                    b = lb.fetch(entry, regions, kind)
+                    if b:
+                        save(media, sysname, kind, base, b); got.append(what + ' (LaunchBox)')
     code = nds_code(path) if sysname == 'nds' else None
     regions = TDB_REGION.get(code[3], ['US', 'EN']) if code else []
     # the box (also the cartridge's label art, cropped)
@@ -239,7 +413,13 @@ def main():
     ap.add_argument('--only', choices=['nds', 'gba'])
     ap.add_argument('--force', action='store_true')
     ap.add_argument('--jobs', type=int, default=4)
+    ap.add_argument('--no-launchbox', action='store_true', help='skip the LaunchBox Games Database')
+    ap.add_argument('--refresh-launchbox', action='store_true', help='download its database again now')
     a = ap.parse_args()
+    lb = None
+    if not a.no_launchbox:
+        systems = [s for s in ('nds', 'gba') if not a.only or a.only == s]
+        lb = LaunchBox(a.media, systems, a.refresh_launchbox)
     for sysname in ('nds', 'gba'):
         if a.only and a.only != sysname:
             continue
@@ -255,7 +435,7 @@ def main():
         stats = {'done': 0, 'found': 0, 'total': len(roms)}
         with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
             for r in roms:
-                ex.submit(scrape_game, sysname, r, a.media, lr, a.force, stats)
+                ex.submit(scrape_game, sysname, r, a.media, lr, a.force, stats, lb)
         log('%s: art found for %d of %d' % (sysname.upper(), stats['found'], len(roms)))
     log('Done. The menu shows the new art the next time it opens (or Options > Look for new games).')
 
