@@ -1351,6 +1351,7 @@ static char join_ssid[72];
 static char tz_region[40];
 static char upd_zip[400], upd_ver[32]; static double upd_checked = -100;
 static int art_shown, art_found; static long art_off; static char art_line[160]; static double art_poll_t;
+static int art_done, art_total; static char art_short[40];   /* the progress, for the status bar and Options */
 
 static void script_path(char *out, int n, const char *name) { snprintf(out, (size_t)n, "%s/%s", cfg.home, name); }
 static int have_script(const char *name) { char p[400]; script_path(p, sizeof p, name); return !access(p, X_OK); }
@@ -1495,7 +1496,8 @@ static void art_start(void) {
     char q[420], h[300], cmd[900]; shq(q, sizeof q, sp); shq(h, sizeof h, cfg.home);
     snprintf(cmd, sizeof cmd, "DSIXL_HOME=%s exec python3 -u %s --progress", h, q);
     if (job_start(&artjob, "art", cmd)) { say_error("Couldn't get art.", "The art script didn't start."); return; }
-    art_off = 0; art_found = 0; art_shown = 1;
+    art_off = 0; art_found = 0; art_shown = 1; art_done = art_total = 0;
+    snprintf(art_short, sizeof art_short, "Starting");
     busy(K_ART, "Getting art\xe2\x80\xa6", "Starting");
 }
 /* a game's art arrived: it's loaded again, and its cartridge gives a little jump */
@@ -1529,14 +1531,23 @@ static void art_poll(void) {
                 snprintf(busy1, sizeof busy1, "Downloading the games database");
                 snprintf(busy2, sizeof busy2, "%s of %s MB (once a month)", fld[2], fld[3]);
                 busy_prog = atof(fld[3]) > 0 ? (float)(atof(fld[2]) / atof(fld[3])) : -1;
+                snprintf(art_short, sizeof art_short, "Database %s/%s MB", fld[2], fld[3]);
             } else if (nf >= 2 && !strcmp(fld[1], "reading")) {
                 snprintf(busy1, sizeof busy1, "Reading the games database");
                 snprintf(busy2, sizeof busy2, "A minute or two");
                 busy_prog = -1;
+                snprintf(art_short, sizeof art_short, "Reading database");
+            } else if (nf >= 3 && !strcmp(fld[1], "index")) {
+                snprintf(busy1, sizeof busy1, "Looking up the %s art", !strcmp(fld[2], "gba") ? "GBA" : "DS");
+                snprintf(busy2, sizeof busy2, "Lists of what's there");
+                busy_prog = -1;
+                snprintf(art_short, sizeof art_short, "Looking up art");
             } else if (nf >= 7 && !strcmp(fld[1], "game")) {
-                snprintf(busy1, sizeof busy1, "Getting art: %s of %s", fld[3], fld[4]);
+                art_done = atoi(fld[3]); art_total = atoi(fld[4]);
+                snprintf(busy1, sizeof busy1, "Getting art: %d of %d", art_done, art_total);
                 snprintf(busy2, sizeof busy2, "%s", fld[5]);
-                busy_prog = atof(fld[4]) > 0 ? (float)(atof(fld[3]) / atof(fld[4])) : -1;
+                busy_prog = art_total > 0 ? (float)art_done / art_total : -1;
+                snprintf(art_short, sizeof art_short, "Art %d/%d", art_done, art_total);
                 if (atoi(fld[6]) > 0) { art_found++; art_arrived(fld[2], fld[5]); }
             }
         }
@@ -1616,7 +1627,8 @@ static void opt_label_more(int i, char *b, int n) {
         break;
     }
     case OPT_ART:
-        if (job_running(&artjob)) snprintf(b, (size_t)n, "Getting art\xe2\x80\xa6 (see how it goes)");
+        if (job_running(&artjob) && art_total) snprintf(b, (size_t)n, "Getting art: %d of %d", art_done, art_total);
+        else if (job_running(&artjob)) snprintf(b, (size_t)n, "Getting art: %s", art_short);
         else snprintf(b, (size_t)n, "Get art from the internet");
         break;
     case OPT_UPDATE: snprintf(b, (size_t)n, "Update to %s", upd_ver); break;
@@ -1768,6 +1780,19 @@ static void flows_step(float dt) {
     busy_anim = clampf(busy_anim + (flow == F_BUSY ? dt : -dt) / 0.2f, 0, 1);
     wifi_status_poll();
     art_poll();
+}
+/* the art still coming in the background (its window closed): a small pill in the top screen's status bar */
+static void art_pill(Surf *top, float y) {
+    if (!job_running(&artjob) || (flow == F_BUSY && flow_kind == K_ART)) return;
+    int w = text_w(FONT_XS, art_short) + 30, x = 100 - w / 2, yy = (int)y + 2;
+    rrect(top, x, yy, w, 11, 5.5f, 0xffffff, 200);
+    rrect_line(top, x, yy, w, 11, 5.5f, 1, 0xa8b4c0, 255);
+    /* a little bar: how far it is (a sweep while it can't tell) */
+    int bx = x + 5, bw = 14, by = yy + 4;
+    rect_blend(top, bx, by, bw, 3, 0xd0d8e0, 255);
+    if (art_total) rect_blend(top, bx, by, MAX(1, bw * art_done / art_total), 3, 0x3c8ce0, 255);
+    else { int p = (int)fmod(T * 12, bw + 4) - 4, x0 = MAX(0, p), x1 = MIN(bw, p + 4); if (x1 > x0) rect_blend(top, bx + x0, by, x1 - x0, 3, 0x3c8ce0, 255); }
+    text(top, FONT_XS, bx + bw + 4, yy, 0x404850, 255, art_short);
 }
 static void flows_draw(Surf *bot, Surf *top) {
     picker_draw(&pk, bot, top);
@@ -2748,6 +2773,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     draw_mood(top);
     float sb_y = (1 - ease_out_cubic(intro)) * -16;
     status_bar(top, sb_y, 255, T);
+    art_pill(top, sb_y);
     if (state == ST_LAUNCH) {
         float t = (float)st_t;
         float k = smoothstep(0.05f, 0.3f, t);

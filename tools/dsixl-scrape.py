@@ -448,8 +448,10 @@ def main():
         log('%s: %d games in %s' % (sysname.upper(), len(roms), d))
         if not roms:
             continue
+        prog('index', sysname)
         lr = Libretro(sysname, a.media)
         stats = {'done': 0, 'found': 0, 'total': len(roms)}
+        prog('game', sysname, 0, len(roms), ' ', 0)   # (a blank name: the menu splits on tabs)
         with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
             for r in roms:
                 ex.submit(scrape_game, sysname, r, a.media, lr, a.force, stats, lb)
