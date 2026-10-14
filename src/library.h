@@ -19,6 +19,7 @@ typedef struct {
     Img logo; int logo_state;       /* the title logo for the top screen */
     Img shot; int shot_state;       /* the top screen's photo: 1 a screenshot, 2 the title screen; -1 none */
     Img photo;                      /* ui.c: the photo, framed and tilted, ready to draw */
+    int fav;                        /* a favourite: first in its list, with a star */
     void *cart;                     /* cart.c's texture for this game */
     uint32_t tint; int tint_state;  /* the main colour of its art (the bottom screen takes it on); 1 there, -1 none */
 } Game;
@@ -35,5 +36,8 @@ void game_load_art(Game *g);
 void game_free_art(Game *g);
 /* its main colour (g->tint, when g->tint_state is 1) */
 void game_tint(Game *g);
+/* favourites (favorites.txt in the menu's folder): on or off, saved at once; then the list sorted again (the
+ * favourites first). Returns the game's new index. */
+int library_set_fav(int sys, int index, int on);
 const char *sys_name(int sys);       /* "Nintendo DS", "Game Boy Advance" */
 const char *sys_short(int sys);      /* "NDS", "GBA" */

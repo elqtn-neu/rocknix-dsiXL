@@ -58,7 +58,11 @@ static int coast;
 static Spring rubber;                   /* the row pulled past an end, in pixels */
 static int notch_pending;
 static int a_hold; static Spring sink;
-static Spring frame_x = { 128, 0 };     /* the selection frame travels with the cartridges, a little behind them */  /* A (or a finger) held on the selected cartridge: it sinks in */
+static Spring frame_x = { 128, 0 };
+static double view_t = -10;             /* X: the top screen switched between the logo and the photo */
+static double fav_t = -10; static Game *fav_g; static int fav_on;   /* Y: the star popping on (or off) */
+static double reorder_t = -10;          /* the list re-sorted (a favourite moved): the neighbours fade in */
+static uint8_t *marks; static int marks_n;     /* the selection frame travels with the cartridges, a little behind them */  /* A (or a finger) held on the selected cartridge: it sinks in */
 
 /* the top screen's logo: the current one and the one leaving */
 static Game *logo_cur, *logo_prev; static double logo_t = -10;
@@ -375,9 +379,9 @@ static Img *game_photo(Game *g) {
     return g->photo.px ? &g->photo : 0;
 }
 
-static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy) {
+static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy, int view) {
     if (!g || alpha <= 0.01f) return;
-    Img *ph = game_photo(g);
+    Img *ph = view ? game_photo(g) : 0;     /* the photo only in the photo view (X) */
     Img *lo = ph && g->shot_state == 2 ? &g->shot : game_logo(g);
     if (!lo) return;
     float bob = sinf((float)T * 1.6f) * 3.0f;
@@ -525,8 +529,24 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
         Game *g = &L->g[idx[k]];
         if ((hide && g == lg) || (rg && g == rg)) continue;   /* it is flying: drawn by the animation */
         it[k].pose.alpha = alpha * (1 - smoothstep(2.6f, 3.6f, fabsf(it[k].d)));
+        if (sy == sys && idx[k] != r->sel) it[k].pose.alpha *= smoothstep(0, 0.3f, (float)(T - reorder_t));
         cart_draw(s, g, &it[k].pose);
+        /* a favourite: a gold star on its top right corner (popping on, or shrinking away when it stops being one) */
+        float pk = g == fav_g ? (float)(T - fav_t) / 0.45f : 2;
+        if (g->fav || (pk < 1 && !fav_on)) {
+            float cw2, ch2, cd2; cart_size(sy, &cw2, &ch2, &cd2);
+            float h = it[k].w * ch2 / cw2, r0 = 3.2f + 2.3f * it[k].f;
+            float rr = r0;
+            if (pk < 1) rr = fav_on ? r0 * (0.2f + 0.8f * ease_out_elastic(pk)) : r0 * (1 - ease_in_cubic(pk));
+            star(s, roundf(it[k].x + it[k].w * 0.44f), roundf(it[k].y - h * 0.5f + 1), rr, C_STAR, (int)(it[k].pose.alpha * 255));
+        }
     }
+}
+
+static const uint8_t *fav_marks(int s) {
+    if (lib[s].n > marks_n) { uint8_t *m = realloc(marks, (size_t)lib[s].n); if (!m) return 0; marks = m; marks_n = lib[s].n; }
+    for (int i = 0; i < lib[s].n; i++) marks[i] = (uint8_t)lib[s].g[i].fav;
+    return marks;
 }
 
 static float parallax(void) { return lib[sys].n ? -row[sys].pos.x * geo(sys).spacing * 0.35f : 0; }
@@ -545,8 +565,10 @@ static void draw_bottom(Surf *s, float intro) {
     Game *g = cur_game(sys);
     if (g && state != ST_LAUNCH) {
         float k = ease_out_cubic((float)(T - sel_t) / 0.25f);
-        char t[160]; text_fit(FONT_MD, g->title, 236, t, sizeof t);
-        text_center(s, FONT_MD, 128, 44 + (int)((1 - k) * 4), 0x505050, (int)(255 * k * intro), t);
+        char t[160]; text_fit(FONT_MD, g->title, g->fav ? 222 : 236, t, sizeof t);
+        int tw = text_w(FONT_MD, t), tx = 128 - (tw + (g->fav ? 13 : 0)) / 2, ty = 44 + (int)((1 - k) * 4);
+        if (g->fav) { star(s, tx + 5, ty + 11, 4.2f, C_STAR, (int)(255 * k * intro)); tx += 13; }
+        text(s, FONT_MD, tx, ty, 0x505050, (int)(255 * k * intro), t);
     }
 
     /* the cartridges: switching systems slides one row out and the other in */
@@ -566,7 +588,7 @@ static void draw_bottom(Surf *s, float intro) {
 
     /* the scroll bar */
     float sby = 176 + (1 - ease_out_cubic(intro)) * 20;
-    scroll_bar(s, (int)sby, lib[sys].n, lib[sys].n ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, 255);
+    scroll_bar(s, (int)sby, lib[sys].n, lib[sys].n ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
 }
 
 /* ---- the options window ---- */
@@ -824,6 +846,31 @@ static void touch_update(void) {
     }
 }
 
+/* Y: a favourite, or not. The star pops on (with a burst of gold), the list sorts the favourites to the front, and the
+ * row keeps this game where it is while its neighbours change around it */
+static void toggle_fav(void) {
+    Row *r = &row[sys];
+    int old = r->sel, on = !lib[sys].g[old].fav;
+    int n = library_set_fav(sys, old, on);
+    Game *g = &lib[sys].g[n];
+    r->sel = n; r->pos.x += (float)(n - old);
+    snprintf(cfg.last[sys], sizeof cfg.last[sys], "%s", g->file);
+    logo_cur = g; logo_prev = 0;                       /* (the games moved in memory) */
+    for (int i = 0; i < fx_n[sys]; i++) fx[sys][i].wob = (Spring){ 0, 0 };
+    fx_of(sys, n)->wob.v += on ? -10 : 8;
+    fav_g = g; fav_on = on; fav_t = T;
+    if (n != old) reorder_t = T;
+    glide_dir = 0; coast = 0; a_hold = 0;
+    if (on) {
+        sfx_pitch(SFX_SELECT, 1.25f); rumble(20, 0.5f);
+        RowGeo G = geo(sys);
+        for (int i = 0; i < 10; i++) {
+            float a = i * (2 * PI_F / 10), sp = 50 + (hash3(i, (int)(T * 60), 5) % 40);
+            spawn_k(P_SPARK, 1, 128 + G.sel_w * 0.42f, G.cy - 26, cosf(a) * sp, sinf(a) * sp, 0.5f, -(1.5f + (i & 1)), C_STAR);
+        }
+    } else { sfx_pitch(SFX_BACK, 1.1f); rumble(10, 0.3f); }
+}
+
 static void menu_update(float dt) {
     if (opt_open) {
         if (repeat(B_UP)) { opt_sel = (opt_sel + OPT_COUNT - 1) % OPT_COUNT; sfx(SFX_CURSOR); }
@@ -868,6 +915,11 @@ static void menu_update(float dt) {
         if (pressed(btn_a()) && lib[sys].n) { a_hold = 1; rumble(10, 0.3f); }
         if (a_hold && !(in.held & BIT(btn_a()))) { a_hold = 0; start_launch(); }
         if (pressed(B_START)) { opt_open = 1; opt_t = T; opt_sel = 0; sfx(SFX_OPEN); }
+        if (pressed(B_X)) {           /* the top screen: the logo, or the photo */
+            cfg.top_view = !cfg.top_view; view_t = T; state_save();
+            sfx_pitch(SFX_TAB, cfg.top_view ? 1.12f : 0.92f); rumble(12, 0.3f);
+        }
+        if (pressed(B_Y) && lib[sys].n) toggle_fav();
     }
     touch_update();
     /* a flick coasts on, slowing, ticking past each cartridge, then settles on one */
@@ -1038,15 +1090,21 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     if (state == ST_LAUNCH) {
         float t = (float)st_t;
         float k = smoothstep(0.05f, 0.3f, t);
-        draw_logo(top, lg, 1 - k, 1 - 0.25f * k, -10 * k);   /* (the cartridge and the slot come below) */
+        draw_logo(top, lg, 1 - k, 1 - 0.25f * k, -10 * k, cfg.top_view);   /* (the cartridge and the slot come below) */
     } else {
         float lk = (float)(T - logo_t);
-        if (logo_prev && lk < 0.14f) draw_logo(top, logo_prev, 1 - lk / 0.14f, 1 - 0.1f * lk / 0.14f, lk * 30);
+        if (logo_prev && lk < 0.14f) draw_logo(top, logo_prev, 1 - lk / 0.14f, 1 - 0.1f * lk / 0.14f, lk * 30, cfg.top_view);
         float ka = clampf((lk - 0.06f) / 0.3f, 0, 1);
         float sc = 0.8f + 0.2f * ease_out_back(ka);
         if (rg && ret_t >= 0 && ret_t < 0.9) ka = 0;            /* coming back: the logo after the cartridge */
         else if (rg && ret_t >= 0.9) ka = MIN(ka, ease_out_cubic((float)(ret_t - 0.9) / 0.3f));
-        draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20);
+        /* X: the view that's going shrinks away, the new one pops in */
+        float vk = (float)(T - view_t) / 0.34f;
+        if (vk < 1) {
+            draw_logo(top, logo_cur, ka * intro * (1 - smoothstep(0, 0.45f, vk)), sc * (1 - 0.1f * vk), vk * 6, !cfg.top_view);
+            float nk = smoothstep(0.3f, 1, vk);
+            draw_logo(top, logo_cur, ka * intro * nk, sc * (0.88f + 0.12f * ease_out_back(nk)), (1 - intro) * 20, cfg.top_view);
+        } else draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20, cfg.top_view);
     }
     snow(top, fdt);
 
@@ -1060,7 +1118,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         draw_row(bot, l_sys, 0, 1 - k * 0.85f, 1);
         tab(bot, 0, -6, 0, 82, "NDS", l_sys == SYS_NDS, 0, 255);
         tab(bot, 1, 256 - 76, 0, 82, "GBA", l_sys == SYS_GBA, 0, 255);
-        scroll_bar(bot, 176, lib[l_sys].n, row[l_sys].pos.x, 5, 0, 255);
+        scroll_bar(bot, 176, lib[l_sys].n, row[l_sys].pos.x, 5, 0, fav_marks(l_sys), 255);
         (void)tmp;
         launch_draw(top, bot, t);
         if (t >= L_SLAM && t - dt < L_SLAM) sound_parts_slam();

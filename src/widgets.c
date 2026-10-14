@@ -16,20 +16,28 @@ Accent accent_of(uint32_t base) {
     return a;
 }
 
-void bg_top(Surf *s, double t) {
-    (void)t;
-    for (int y = 0; y < s->h; y++) {
-        uint32_t c = (y & 1) ? C_STRIPE_B : C_STRIPE_A, *r = s->px + (size_t)y * s->pitch;
-        for (int x = 0; x < s->w; x++) r[x] = c;
-    }
-}
-
-/* the bottom screen's pattern: small rounded diamonds on a 16 px lattice (every other row shifted half a cell),
- * drifting a pixel at a time, very faint */
+/* the pattern: small rounded diamonds on a 16 px lattice (every other row shifted half a cell), drifting a pixel at
+ * a time, very faint */
 static const uint8_t DIAMOND[7][7] = {
     { 0, 0, 1, 2, 1, 0, 0 }, { 0, 1, 3, 3, 3, 1, 0 }, { 1, 3, 3, 3, 3, 3, 1 }, { 2, 3, 3, 3, 3, 3, 2 },
     { 1, 3, 3, 3, 3, 3, 1 }, { 0, 1, 3, 3, 3, 1, 0 }, { 0, 0, 1, 2, 1, 0, 0 },
 };
+
+/* the top screen: the DSi's grey stripes, and the bottom screen's diamonds, fainter and drifting the other way */
+void bg_top(Surf *s, double t) {
+    for (int y = 0; y < s->h; y++) {
+        uint32_t c = (y & 1) ? C_STRIPE_B : C_STRIPE_A, *r = s->px + (size_t)y * s->pitch;
+        for (int x = 0; x < s->w; x++) r[x] = c;
+    }
+    int off = (int)(t * 3) % 32;
+    for (int cy = -32; cy < s->h + 32; cy += 16) {
+        int row = ((cy + 64) / 16) & 1;
+        for (int cx = -32; cx < s->w + 32; cx += 32) {
+            int x0 = cx + row * 16 - off, y0 = cy + off / 2;
+            for (int j = 0; j < 7; j++) for (int i = 0; i < 7; i++) if (DIAMOND[j][i]) pblend(s, x0 + i, y0 + j, 0xaab2ba, DIAMOND[j][i] * 6);
+        }
+    }
+}
 void bg_bottom(Surf *s, double t, uint32_t tint, int amt, float par_x) {
     uint32_t ca = col_mix(0xf2f2f2, col_mix(tint, 0xffffff, 150), amt), cb = col_mix(0xf9f9f9, col_mix(tint, 0xffffff, 190), amt);
     for (int y = 0; y < s->h; y++) {
@@ -192,7 +200,7 @@ void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label,
 }
 
 #define SB_BTN 19
-void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, int alpha) {
+void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, const uint8_t *marks, int alpha) {
     Accent a = accent();
     int h = 16;
     rect_vgrad(s, 0, y, 256, h, 0xf2f2f2, 0xc6c6c6, alpha);
@@ -216,8 +224,9 @@ void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, int
     float start = tx0 + (tw - step * count) / 2;
     for (int i = 0; i < count; i++) {
         int x = (int)(start + i * step);
-        if (step >= 4) rect_blend(s, x, my - 1, 3, 3, 0x6e766e, alpha);
-        else vline(s, x, my - 1, my + 1, 0x6e766e, alpha);
+        uint32_t mc = marks && marks[i] ? 0xe0a010 : 0x6e766e;     /* the favourites in gold */
+        if (step >= 4) rect_blend(s, x, my - 1, 3, 3, mc, alpha);
+        else vline(s, x, my - 1, my + 1, mc, alpha);
     }
     int sel = CLAMP((int)roundf(pos), 0, count - 1);
     int sx = (int)(start + sel * step);
@@ -263,6 +272,23 @@ void button(Surf *s, float x, float y, float w, float h, const char *label, int 
     rrect_vgrad(s, x + 1, y + 1, w - 2, h - 2, 4, focus ? 0xffffff : 0xffffff, focus ? a.pale : 0xe9e9e9, alpha);
     if (focus) rrect_line(s, x + 1, y + 1, w - 2, h - 2, 4, 1, col_mix(a.base, 0xffffff, 90), alpha);
     if (label) text_center(s, FONT_MD, (int)(x + w / 2), (int)(y + h / 2) - 9, focus ? col_mix(a.base, 0x000000, 120) : C_TEXT, alpha, label);
+}
+
+void star(Surf *s, float cx, float cy, float r, uint32_t c, int alpha) {
+    if (r < 0.5f || alpha <= 0) return;
+    /* five points around a pentagon, the inner radius 0.45 of the outer; an outline one pixel out */
+    for (int pass = 0; pass < 2; pass++) {
+        float rr = pass ? r : r + 1.3f, ri = rr * 0.45f;
+        uint32_t col = pass ? c : 0xffffff;
+        float px[10], py[10];
+        for (int i = 0; i < 10; i++) {
+            float a = -PI_F / 2 + i * PI_F / 5, rad = (i & 1) ? ri : rr;
+            px[i] = cx + cosf(a) * rad; py[i] = cy + sinf(a) * rad;
+        }
+        for (int i = 0; i < 10; i++) tri_fill(s, cx, cy, px[i], py[i], px[(i + 1) % 10], py[(i + 1) % 10], col, pass ? alpha : alpha * 230 / 255);
+    }
+    /* a highlight on the upper left */
+    pblend(s, (int)(cx - r * 0.25f), (int)(cy - r * 0.3f), 0xffffff, alpha * 150 / 255);
 }
 
 void sparkle(Surf *s, float x, float y, float size, uint32_t c, int alpha) {

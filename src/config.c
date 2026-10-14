@@ -82,7 +82,7 @@ static void cfg_kv(const char *key, const char *v) {
     STR("nds_roms", dir_nds) STR("gba_roms", dir_gba) STR("media", media) STR("sounds", sounds)
 }
 static void state_kv(const char *key, const char *v) {
-    INT("system", sys) STR("last_nds", last[0]) STR("last_gba", last[1])
+    INT("system", sys) STR("last_nds", last[0]) STR("last_gba", last[1]) INT("top_view", top_view)
 }
 
 void config_load(void) {
@@ -143,7 +143,7 @@ void config_save(void) {
 void state_save(void) {
     char p[400], buf[800];
     snprintf(p, sizeof p, "%s/state.ini", cfg.home);
-    snprintf(buf, sizeof buf, "system = %d\nlast_nds = %s\nlast_gba = %s\n", cfg.sys, cfg.last[0], cfg.last[1]);
+    snprintf(buf, sizeof buf, "system = %d\nlast_nds = %s\nlast_gba = %s\ntop_view = %d\n", cfg.sys, cfg.last[0], cfg.last[1], cfg.top_view);
     write_atomic(p, buf);
 }
 

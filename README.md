@@ -19,9 +19,12 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   bottom, "Touch the Touch Screen to continue." pulsing. A touch or any button, then the menu slides in from white.
 - **Top screen.**
   - The DSi's status bar: the speaker, the date, the time with its blinking colon, the battery.
-  - A **photo** of the selected game in a white frame, a little crooked, as the DSi showed your photos. A game
-    with a logo gets a screenshot with its **logo** floating over it (glint and sparkles). A game without one (most
-    DS games) gets its title screen alone, which carries the logo. With no art at all: the title, set as a logo.
+  - The DSi's grey stripes with a faint drifting diamond pattern.
+  - The selected game's **title logo**, floating, with a soft glow, a shadow on the floor, a glint and sparkles.
+    With no logo, its title set as one.
+  - **X** switches to the **photo view**: the game in a white photo frame, a little crooked, as the DSi showed
+    your photos. A game with a logo gets a screenshot with the logo floating over it; a game without one (most DS
+    games) gets its title screen alone, which carries the logo. X again goes back. The menu remembers which.
 - **Bottom screen.**
   - White with the DSi's stripes and a slow pattern.
   - **3D cartridges** in a row: a DS game card or a GBA Game Pak, carrying the game's art.
@@ -58,8 +61,13 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 | Up / Down | five games back / on |
 | L / R, SELECT | Nintendo DS / Game Boy Advance |
 | A (or tap the selected cartridge) | start it (on release: the cartridge sinks in while held) |
+| X | the top screen: the logo, or the photo view |
+| Y | a favourite, or not: a gold star, and it moves to the front of its list |
 | START | Options: colour, clock, sound effects, music, vibration, look for new games, exit to EmulationStation, power off |
 | B | close the options |
+
+Favourites are kept in `/storage/.config/dsixl/favorites.txt` (a line per game: `NDS<tab>file name`), and marked
+in gold on the scroll bar.
 
 ## Install (on the handheld, over ssh)
 

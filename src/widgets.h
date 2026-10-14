@@ -27,12 +27,15 @@ void btn_glyph(Surf *s, int x, int y, const char *letter, uint32_t bg, int alpha
 /* the blue (accent) frame around the selected item, its label underneath ("START") */
 void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, uint32_t base, float shine, int alpha);
 /* the scroll bar along the bottom: count items, sel, view = items visible; press -1 left, 1 right */
-void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, int alpha);
+void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, const uint8_t *marks, int alpha);   /* marks[i]: a favourite */
 int scroll_bar_hit(int x, int y0, int count, float view, int *zone);   /* the item a touch at x points at */
 /* a window and a button in the DSi's style */
 void window(Surf *s, float x, float y, float w, float h, const char *title, int alpha);
 void button(Surf *s, float x, float y, float w, float h, const char *label, int focus, float press, int alpha);
 /* a blinking 4-point sparkle */
 void sparkle(Surf *s, float x, float y, float size, uint32_t c, int alpha);
+/* a five-pointed star with a white rim (favourites) */
+void star(Surf *s, float cx, float cy, float r, uint32_t c, int alpha);
+#define C_STAR 0xf6b81c
 /* a glossy light band swept over an image's opaque pixels */
 void blit_glint(Surf *s, const Img *im, float dx, float dy, float dw, float dh, float phase, float strength);

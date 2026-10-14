@@ -15,6 +15,7 @@ typedef struct {
     char home[256], cache[300];
     /* state */
     int sys;                        /* 0 NDS, 1 GBA */
+    int top_view;                   /* the top screen: 0 the logo, 1 the photo (X) */
     char last[2][256];              /* the selected game per system (file name) */
 } Config;
 
