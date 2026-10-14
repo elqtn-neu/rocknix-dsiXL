@@ -13,10 +13,11 @@ D=/storage/.config/dsixl
 # the Anbernic button + volume: ROCKNIX's input service runs these (the DSi's five brightness levels) instead of its
 # own 5% steps; put back on uninstall. The service reads them when it starts.
 hotkeys() {
-    bash -c '. /etc/profile.d/001-functions 2>/dev/null || exit 0
+    # (never waits long: ROCKNIX's settings lock or its input service must not hold the install up)
+    timeout 15 bash -c '. /etc/profile.d/001-functions 2>/dev/null || exit 0
         if [ "$1" = on ]; then set_setting key.function.a.up "$2/brightness.sh up"; set_setting key.function.a.down "$2/brightness.sh down"
         else case "$(get_setting key.function.a.up)" in *dsixl/brightness.sh*) del_setting key.function.a.up; del_setting key.function.a.down ;; esac; fi' _ "$1" "$D" || true
-    systemctl restart input.service 2>/dev/null || true
+    systemctl --no-block restart input.service 2>/dev/null || true     # (stopping it can take a while: don't wait)
 }
 case "$1" in
 --uninstall)
