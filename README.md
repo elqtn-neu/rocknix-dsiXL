@@ -34,6 +34,12 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   thud, shake, dust, the power lamp. Then white, as the DSi does, and the game.
 - **Back from a game.** The cartridge pops out of the slot, drops through to the bottom screen and lands back in
   its place.
+- **Alive.** Cartridges wobble like jelly when tapped, tilt with a flick, lean toward the selected one, and the
+  newly selected one does a little hop. After 15 seconds untouched, the selected one turns all the way round or a
+  wave runs along the row. Taps leave a burst of stars in your colour. The bottom screen and the selection frame
+  take on the selected game's own colour (from its box art), and the pattern slides slower than the row
+  (parallax). The cursor tick rises in pitch along the list. On your birthday (`birthday = MM-DD` in
+  `config.ini`): a cake by your name and confetti. In December: snow on the top screen.
 - **Tactile everywhere.** Springs with a little overshoot, eases, a bump at the ends of the list, sounds on every
   move. Touch works throughout: drag or flick the row, tap a cartridge, tap the selected one to start it, tap the
   tabs, the scroll bar and its arrows.

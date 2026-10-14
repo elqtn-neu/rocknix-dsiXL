@@ -10,6 +10,7 @@ typedef struct {
     float desat;            /* 0..1: the cartridges that aren't selected are greyer */
     float bright;           /* 1 = lit as is */
     float gloss, gloss_pos; /* the glossy streak (see r3d.h) */
+    float stretch_x, stretch_y; /* squash and stretch, across and along its height (0 = 1) */
 } CartPose;
 
 void cart_draw(Surf *s, Game *g, const CartPose *p);

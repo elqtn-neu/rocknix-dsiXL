@@ -5,9 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-Accent accent(void) {
+Accent accent(void) { return accent_of(fav_color(cfg.color)); }
+Accent accent_of(uint32_t base) {
     Accent a;
-    a.base = fav_color(cfg.color);
+    a.base = base;
     a.dark = col_mix(a.base, 0x000000, 80);
     a.mid = col_mix(a.base, 0xffffff, 40);
     a.light = col_mix(a.base, 0xffffff, 120);
@@ -29,19 +30,58 @@ static const uint8_t DIAMOND[7][7] = {
     { 0, 0, 1, 2, 1, 0, 0 }, { 0, 1, 3, 3, 3, 1, 0 }, { 1, 3, 3, 3, 3, 3, 1 }, { 2, 3, 3, 3, 3, 3, 2 },
     { 1, 3, 3, 3, 3, 3, 1 }, { 0, 1, 3, 3, 3, 1, 0 }, { 0, 0, 1, 2, 1, 0, 0 },
 };
-void bg_bottom(Surf *s, double t) {
+void bg_bottom(Surf *s, double t, uint32_t tint, int amt, float par_x) {
+    uint32_t ca = col_mix(0xf2f2f2, col_mix(tint, 0xffffff, 150), amt), cb = col_mix(0xf9f9f9, col_mix(tint, 0xffffff, 190), amt);
     for (int y = 0; y < s->h; y++) {
-        uint32_t c = (y & 1) ? 0xf9f9f9 : 0xf2f2f2, *r = s->px + (size_t)y * s->pitch;
+        uint32_t c = (y & 1) ? cb : ca, *r = s->px + (size_t)y * s->pitch;
         for (int x = 0; x < s->w; x++) r[x] = c;
     }
+    uint32_t pc = col_mix(0xb9c4cc, col_mix(tint, 0x606060, 60), amt);
     int off = (int)(t * 5) % 32;          /* 5 px a second along the diagonal */
+    int px = ((int)floorf(par_x) % 32 + 32) % 32;     /* and the slide while scrolling: slower than the cartridges */
     for (int cy = -32; cy < s->h + 32; cy += 16) {
         int row = ((cy + 64) / 16) & 1;
-        for (int cx = -32; cx < s->w + 32; cx += 32) {
-            int x0 = cx + row * 16 + off, y0 = cy + off / 2;
-            for (int j = 0; j < 7; j++) for (int i = 0; i < 7; i++) if (DIAMOND[j][i]) pblend(s, x0 + i, y0 + j, 0xb9c4cc, DIAMOND[j][i] * 7);
+        for (int cx = -64; cx < s->w + 32; cx += 32) {
+            int x0 = cx + row * 16 + off + px, y0 = cy + off / 2;
+            for (int j = 0; j < 7; j++) for (int i = 0; i < 7; i++) if (DIAMOND[j][i]) pblend(s, x0 + i, y0 + j, pc, DIAMOND[j][i] * 7);
         }
     }
+}
+
+/* the consoles, as little glyphs drawn in pixels */
+static void glyph_ds(Surf *s, int x, int y, uint32_t c, int a) {
+    rrect_line(s, x, y + 1, 11, 7, 2, 1.3f, c, a);      /* the top screen: open */
+    rrect(s, x, y + 9, 11, 7, 2, c, a);                 /* the bottom screen: solid */
+}
+static void glyph_gba(Surf *s, int x, int y, uint32_t c, int a) {
+    rrect(s, x, y + 4, 22, 12, 5, c, a);                /* the body */
+    rect_blend(s, x + 7, y + 6, 8, 7, 0xffffff, a * 220 / 255);   /* the screen */
+    rect_blend(s, x + 2, y + 9, 3, 1, 0xffffff, a * 220 / 255); rect_blend(s, x + 3, y + 8, 1, 3, 0xffffff, a * 220 / 255);
+    pblend(s, x + 18, y + 8, 0xffffff, a * 220 / 255); pblend(s, x + 17, y + 10, 0xffffff, a * 220 / 255);
+}
+
+void emblem(Surf *s, int sys, float cx, int y, uint32_t tint, int alpha) {
+    const char *name = sys == 0 ? "Nintendo DS" : "Game Boy Advance";
+    int gw = sys == 0 ? 11 : 22, tw = text_w(FONT_BD, name), w = gw + 7 + tw + 22, h = 19;
+    float x = roundf(cx - w / 2.0f);
+    uint32_t ink = col_mix(tint, 0x000000, 70);
+    /* the rules either side, as on a label */
+    int ly = y + h / 2;
+    for (int side = 0; side < 2; side++) {
+        int x0 = side ? (int)(x + w) + 5 : 12, x1 = side ? 243 : (int)x - 5;
+        if (x1 - x0 < 6) continue;
+        hline(s, x0, x1, ly - 1, col_mix(0xc4c8cc, tint, 60), alpha);
+        hline(s, x0, x1, ly, 0xffffff, alpha);
+        disc(s, side ? x1 + 2.0f : x0 - 2.0f, ly - 0.5f, 1.6f, col_mix(0xb0b6bc, tint, 90), alpha);
+    }
+    /* the plate: the DSi's white buttons, glossy, a soft shadow */
+    rrect(s, x + 1, y + 2, w, h, h / 2.0f, 0x000000, alpha * 30 / 255);
+    rrect(s, x, y, w, h, h / 2.0f, col_mix(0xb8bcc0, tint, 70), alpha);
+    rrect_vgrad(s, x + 1, y + 1, w - 2, h - 2, h / 2.0f - 1, 0xffffff, col_mix(0xe6e8ea, tint, 30), alpha);
+    rrect(s, x + 3, y + 2, w - 6, (h - 4) / 2.0f, 4, 0xffffff, alpha * 150 / 255);
+    int gx = (int)x + 11, gy = y + 1;
+    if (sys == 0) glyph_ds(s, gx, gy, ink, alpha); else glyph_gba(s, gx, gy - 1, ink, alpha);
+    text(s, FONT_BD, gx + gw + 7, y - 3, 0x3c3c3c, alpha, name);
 }
 
 static void speaker_icon(Surf *s, int x, int y, uint32_t c, int a) {
@@ -71,7 +111,16 @@ void status_bar(Surf *s, float y_off, int alpha, double t) {
     int y = (int)roundf(y_off);
     Accent a = accent();
     speaker_icon(s, 4, y + 3, C_TEXT, alpha);
-    text(s, FONT_MD, 26, y - 3, col_mix(a.base, 0x303030, 60), alpha, cfg.user);
+    int ux = text(s, FONT_MD, 26, y - 3, col_mix(a.base, 0x303030, 60), alpha, cfg.user);
+    if (is_birthday()) {
+        /* a birthday cake after the name, its candle flickering */
+        int cx = ux + 4, cy = y + 2;
+        rect_blend(s, cx, cy + 5, 11, 6, 0xf4c6d6, alpha); rect_blend(s, cx, cy + 5, 11, 2, 0xffffff, alpha);
+        rect_blend(s, cx - 1, cy + 11, 13, 1, C_TEXT, alpha);
+        for (int i = 0; i < 4; i++) pblend(s, cx + 1 + i * 3, cy + 7, 0xe8476a, alpha);
+        rect_blend(s, cx + 5, cy + 1, 1, 4, 0x6aa7e8, alpha);
+        pblend(s, cx + 5, cy - (((int)(t * 6)) & 1), 0xffb020, alpha); pblend(s, cx + 5, cy, 0xffe070, alpha);
+    }
     char date[16], tm[16]; int colon;
     clock_text(date, sizeof date, tm, sizeof tm, &colon);
     /* "07/29 07 58": the time's colon blinks, drawn by hand between the hours and the minutes */
@@ -111,8 +160,8 @@ void tab(Surf *s, int side, int x, int y, int w, const char *label, int active, 
     if (active) rect_blend(s, x + 6, (int)py + h - 2, w - 12, 2, a.base, alpha * 200 / 255);
 }
 
-void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, int alpha) {
-    Accent a = accent();
+void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, uint32_t base, int alpha) {
+    Accent a = accent_of(base);
     float x = cx - w / 2, y = cy - h / 2;
     rrect(s, x + 1, y + 2, w, h, 7, 0x000000, alpha * 40 / 255);                          /* shadow */
     rrect(s, x, y, w, h, 7, a.dark, alpha);
@@ -200,14 +249,16 @@ void button(Surf *s, float x, float y, float w, float h, const char *label, int 
     if (label) text_center(s, FONT_MD, (int)(x + w / 2), (int)(y + h / 2) - 9, focus ? col_mix(a.base, 0x000000, 120) : C_TEXT, alpha, label);
 }
 
-void sparkle(Surf *s, float x, float y, float size, int alpha) {
+void sparkle(Surf *s, float x, float y, float size, uint32_t c, int alpha) {
     int ix = (int)x, iy = (int)y, n = (int)size;
+    uint32_t core = col_mix(c, 0xffffff, 170);          /* a white heart, the colour toward the tips */
     for (int i = -n; i <= n; i++) {
         int a = alpha * (n + 1 - abs(i)) / (n + 1);
-        pblend(s, ix + i, iy, 0xffffff, a); if (i) pblend(s, ix, iy + i, 0xffffff, a);
+        uint32_t cc = col_mix(core, c, abs(i) * 256 / (n + 1));
+        pblend(s, ix + i, iy, cc, a); if (i) pblend(s, ix, iy + i, cc, a);
     }
-    pblend(s, ix - 1, iy - 1, 0xffffff, alpha / 3); pblend(s, ix + 1, iy - 1, 0xffffff, alpha / 3);
-    pblend(s, ix - 1, iy + 1, 0xffffff, alpha / 3); pblend(s, ix + 1, iy + 1, 0xffffff, alpha / 3);
+    pblend(s, ix - 1, iy - 1, c, alpha / 3); pblend(s, ix + 1, iy - 1, c, alpha / 3);
+    pblend(s, ix - 1, iy + 1, c, alpha / 3); pblend(s, ix + 1, iy + 1, c, alpha / 3);
 }
 
 void blit_glint(Surf *s, const Img *im, float dx, float dy, float dw, float dh, float phase, float strength) {

@@ -18,6 +18,7 @@ typedef struct {
     Img label; int label_state;     /* the cartridge face (label art, or the box art cropped to fit) */
     Img logo; int logo_state;       /* the title logo for the top screen */
     void *cart;                     /* cart.c's texture for this game */
+    uint32_t tint; int tint_state;  /* the main colour of its art (the bottom screen takes it on); 1 there, -1 none */
 } Game;
 
 typedef struct { Game *g; int n; } Library;
@@ -30,5 +31,7 @@ int library_media(const Game *g, const char *kind, char *out, int out_sz);
 /* loads (or drops) the art of a game */
 void game_load_art(Game *g);
 void game_free_art(Game *g);
+/* its main colour (g->tint, when g->tint_state is 1) */
+void game_tint(Game *g);
 const char *sys_name(int sys);       /* "Nintendo DS", "Game Boy Advance" */
 const char *sys_short(int sys);      /* "NDS", "GBA" */

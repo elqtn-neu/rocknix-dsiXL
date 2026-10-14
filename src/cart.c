@@ -173,7 +173,8 @@ void cart_free(Game *g) {
 static int same_pose(const CartPose *a, const CartPose *b) {
     return fabsf(a->scale - b->scale) < 0.002f && fabsf(a->yaw - b->yaw) < 0.002f && fabsf(a->pitch - b->pitch) < 0.002f &&
            fabsf(a->roll - b->roll) < 0.002f && fabsf(a->desat - b->desat) < 0.01f && fabsf(a->bright - b->bright) < 0.01f &&
-           a->gloss < 0.001f && b->gloss < 0.001f;
+           a->gloss < 0.001f && b->gloss < 0.001f && fabsf(a->stretch_x - b->stretch_x) < 0.002f &&
+           fabsf(a->stretch_y - b->stretch_y) < 0.002f;
 }
 
 static float face_shade(V3 n, float *spec) {
@@ -212,11 +213,14 @@ void cart_draw(Surf *s, Game *g, const CartPose *p) {
     const float z0 = 260;                              /* the camera's distance: a natural perspective */
     r3d_camera(cache ? rx : p->sx, cache ? ry : p->sy, p->scale * z0);
     M3 R = m3_rot(p->yaw, p->pitch, p->roll);
+    float kx = p->stretch_x > 0 ? p->stretch_x : 1, ky = p->stretch_y > 0 ? p->stretch_y : 1;
     V3 fr[24], bk[24];
     float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
     for (int i = 0; i < m->n; i++) {
-        fr[i] = v3_add(m3_mul(&R, v3(m->out[i].x, m->out[i].y, -m->d / 2)), v3(0, 0, z0));
-        bk[i] = v3_add(m3_mul(&R, v3(m->out[i].x, m->out[i].y, m->d / 2)), v3(0, 0, z0));
+        /* squashed from its bottom edge (a cartridge lands on it): the bottom stays where it is */
+        float ox = m->out[i].x * kx, oy = (m->out[i].y + m->h / 2) * ky - m->h / 2;
+        fr[i] = v3_add(m3_mul(&R, v3(ox, oy, -m->d / 2)), v3(0, 0, z0));
+        bk[i] = v3_add(m3_mul(&R, v3(ox, oy, m->d / 2)), v3(0, 0, z0));
         float x, y;
         r3d_project(fr[i], &x, &y); minx = MIN(minx, x); maxx = MAX(maxx, x); miny = MIN(miny, y); maxy = MAX(maxy, y);
         r3d_project(bk[i], &x, &y); minx = MIN(minx, x); maxx = MAX(maxx, x); miny = MIN(miny, y); maxy = MAX(maxy, y);

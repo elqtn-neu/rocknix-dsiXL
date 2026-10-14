@@ -78,6 +78,7 @@ static void read_ini(const char *path, void (*kv)(const char *, const char *)) {
 static void cfg_kv(const char *key, const char *v) {
     STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music)
     INT("boot_splash", boot_splash) INT("boot_wait", boot_wait) INT("swap_ab", swap_ab)
+    if (!strcmp(key, "birthday")) { if (sscanf(v, "%d-%d", &cfg.bday_month, &cfg.bday_day) != 2) cfg.bday_month = cfg.bday_day = 0; return; }
     STR("nds_roms", dir_nds) STR("gba_roms", dir_gba) STR("media", media) STR("sounds", sounds)
 }
 static void state_kv(const char *key, const char *v) {
@@ -108,7 +109,8 @@ static void write_atomic(const char *path, const char *text) {
 }
 
 void config_save(void) {
-    char p[400], buf[3000];
+    char p[400], buf[3000], bday[8] = "";
+    if (cfg.bday_month && cfg.bday_day) snprintf(bday, sizeof bday, "%02d-%02d", cfg.bday_month, cfg.bday_day);
     snprintf(p, sizeof p, "%s/config.ini", cfg.home);
     snprintf(buf, sizeof buf,
         "# DSi Menu for ROCKNIXDS. Edit freely; the menu rewrites this file when you change a setting in it.\n"
@@ -124,13 +126,15 @@ void config_save(void) {
         "boot_wait = %d\n"
         "# 1: confirm with the bottom face button instead of the right one\n"
         "swap_ab = %d\n"
+        "# your birthday, MM-DD (a cake and confetti on the day)\n"
+        "birthday = %s\n"
         "nds_roms = %s\n"
         "gba_roms = %s\n"
         "# art: <media>/<nds|gba>/<box|label|logo>/<rom name without extension>.png (tools/dsixl-scrape.py fills it)\n"
         "media = %s\n"
         "# your own sound pack: see the README (boot.wav, cursor.wav, select.wav, ..., music.mp3)\n"
         "sounds = %s\n",
-        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab,
+        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, bday,
         cfg.dir_nds, cfg.dir_gba, cfg.media, cfg.sounds);
     write_atomic(p, buf);
 }
@@ -180,6 +184,17 @@ int battery_level(int *charging) {
     if (charging) *charging = chg;
     return lvl;
 }
+
+static struct tm now_tm(void) {
+    struct timeval tv; gettimeofday(&tv, 0);
+    time_t t = tv.tv_sec;
+    const char *fake = getenv("DSIXL_FAKE_TIME");
+    if (fake) t = (time_t)atoll(fake);
+    struct tm lt; localtime_r(&t, &lt);
+    return lt;
+}
+int is_birthday(void) { struct tm t = now_tm(); return cfg.bday_month && t.tm_mon + 1 == cfg.bday_month && t.tm_mday == cfg.bday_day; }
+int is_snow_season(void) { struct tm t = now_tm(); return t.tm_mon == 11; }
 
 void clock_text(char *date, int dsz, char *tm_, int tsz, int *colon_on) {
     struct timeval tv; gettimeofday(&tv, 0);

@@ -10,6 +10,7 @@ typedef struct {
     int boot_splash;                /* 1: the health and safety screen at start; 0: straight to the menu */
     int boot_wait;                  /* 0: it waits for a touch or a button, as the DSi; n: continues after n s */
     int swap_ab;                    /* Nintendo layout (A right) is the default */
+    int bday_month, bday_day;       /* the user's birthday (0: not set), as the DS keeps it */
     char dir_nds[256], dir_gba[256], media[256], sounds[256];
     char home[256], cache[300];
     /* state */
@@ -30,4 +31,6 @@ const char *fav_color_name(int i);
 
 /* the handheld */
 int battery_level(int *charging);   /* 0..100, -1 without a battery */
+int is_birthday(void);
+int is_snow_season(void);           /* December */
 void clock_text(char *date, int dsz, char *tm, int tsz, int *colon_on);

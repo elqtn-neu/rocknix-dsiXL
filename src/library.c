@@ -212,6 +212,52 @@ void game_load_art(Game *g) {
     }
 }
 
+/* the main colour of a picture: the hue that most of its colourful pixels share, averaged, then made a clean
+ * mid-bright colour (box art's mostly-white or mostly-black areas don't count) */
+static int dominant(const Img *im, uint32_t *out) {
+    float acc[24][4]; memset(acc, 0, sizeof acc);
+    int step = MAX(1, (im->w * im->h) / 6000);
+    for (int i = 0; i < im->w * im->h; i += step) {
+        uint32_t c = im->px[i]; if (CA(c) < 128) continue;
+        float r = CR(c) / 255.0f, g = CG(c) / 255.0f, b = CB(c) / 255.0f;
+        float mx = MAX(r, MAX(g, b)), mn = MIN(r, MIN(g, b)), d = mx - mn;
+        if (mx < 0.15f || d < 0.12f) continue;
+        float s = d / mx, h;
+        if (mx == r) h = fmodf((g - b) / d, 6); else if (mx == g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+        if (h < 0) h += 6;
+        int bin = (int)(h * 4) % 24;
+        float w = s * mx * s;
+        acc[bin][0] += r * w; acc[bin][1] += g * w; acc[bin][2] += b * w; acc[bin][3] += w;
+    }
+    int best = -1; float bw = 0;
+    for (int i = 0; i < 24; i++) {
+        float w = acc[i][3] + 0.5f * (acc[(i + 23) % 24][3] + acc[(i + 1) % 24][3]);   /* neighbours count a little */
+        if (w > bw) { bw = w; best = i; }
+    }
+    if (best < 0 || bw < 3) return -1;
+    float r = acc[best][0] / acc[best][3], g = acc[best][1] / acc[best][3], b = acc[best][2] / acc[best][3];
+    /* as HSV: saturation 0.5..0.85, value 0.62..0.86 */
+    float mx = MAX(r, MAX(g, b)), mn = MIN(r, MIN(g, b));
+    float s = mx > 0 ? (mx - mn) / mx : 0, v = mx;
+    float ns = clampf(s, 0.5f, 0.85f), nv = clampf(v, 0.62f, 0.86f);
+    float k[3] = { r, g, b };
+    for (int i = 0; i < 3; i++) {
+        float f = mx > 0 ? k[i] / mx : 0;                 /* 0..1 within the colour */
+        f = 1 - (1 - f) * (s > 0 ? ns / s : 0);
+        k[i] = clampf(f, 0, 1) * nv;
+    }
+    *out = RGB((int)(k[0] * 255), (int)(k[1] * 255), (int)(k[2] * 255));
+    return 0;
+}
+
+void game_tint(Game *g) {
+    if (g->tint_state) return;
+    if (!g->label_state) game_load_art(g);
+    g->tint_state = -1;
+    if ((g->label_state == 1 || g->label_state == 2) && !dominant(&g->label, &g->tint)) g->tint_state = 1;
+    else if (g->icon.px && !dominant(&g->icon, &g->tint)) g->tint_state = 1;
+}
+
 void game_free_art(Game *g) {
     img_free(&g->label); img_free(&g->logo);
     g->label_state = g->logo_state = 0;
