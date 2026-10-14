@@ -1,12 +1,14 @@
 // ui.c: the menu. Everything moves on springs and eases, at 60 frames a second, drawn at the DS's 256x192:
-//   boot     white screens, the logo and its chime on the top screen, the health and safety screen on the bottom,
-//            "Touch the Touch Screen to continue."; then everything slides in, as the DSi menu does
+//   boot     the DSi XL's start: out of black, the logo and its chime on the top screen, the health and safety screen
+//            on the bottom, "Touch the Touch Screen to continue." (a touch, as on the DSi; A held through it goes
+//            straight into the game played last); then white, and everything slides in, as the DSi menu does
 //   menu     top: the status bar and the selected game's logo, floating. bottom: the cartridges in a row, the
 //            selected one popped out in its frame and in colour, the others greyer; NDS / GBA tabs (L / R); the
 //            DSi's scroll bar along the bottom
 //   launch   the cartridge jumps off the bottom screen, comes up into the top one, hangs, and slams down into the
-//            slot at the bottom of the top screen (where a DSi's card slot is); then white, and the game
-//   return   back from a game: the cartridge comes out of the slot and drops back into its place
+//            slot at the bottom of the top screen (where a DSi's card slot is); then both screens fade to black,
+//            and stay black until the game draws
+//   return   back from a game: out of black, the cartridge comes out of the slot and drops back into its place
 #define _GNU_SOURCE
 #include "ui.h"
 #include "config.h"
@@ -20,6 +22,8 @@
 #include "gamecfg.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 enum { ST_BOOT, ST_MENU, ST_LAUNCH };
 
@@ -117,6 +121,11 @@ static Flake flakes[30];
 static double shake_t = -10; static float shake_amp;
 
 static Img boot_logo;
+static double auto_go_t = -1;           /* A held through the start: "continue" starts by itself at this time */
+
+/* brightness: the DSi's five levels (device/brightness.sh), changed with the Anbernic button + volume (ROCKNIX's
+ * input service runs the script, the menu sees its file change) or the sun button; a bar shows on the top screen */
+static int bri_lv = 4; static double bri_t = -10, bri_poll = -10; static struct timespec bri_mt; static int bri_seen;
 
 /* ---- helpers ---- */
 
@@ -694,6 +703,89 @@ static void draw_bottom(Surf *s, float intro) {
     scroll_bar(s, (int)sby, vn(sys), vn(sys) ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
 }
 
+/* ---- brightness ---- */
+
+static const int BRI_PCT[5] = { 10, 25, 45, 70, 100 };
+static int bri_from_system(void) {
+    /* the level nearest ROCKNIX's setting (system.cfg's display.brightness), as the script reckons it */
+    const char *e = getenv("DSIXL_SYSTEM_CFG");
+    FILE *f = fopen(e && *e ? e : "/storage/.config/system/configs/system.cfg", "r");
+    int pct = 70; char line[256];
+    if (f) { while (fgets(line, sizeof line, f)) if (!strncmp(line, "display.brightness=", 19)) pct = atoi(line + 19); fclose(f); }
+    int best = 0;
+    for (int i = 1; i < 5; i++) if (abs(BRI_PCT[i] - pct) < abs(BRI_PCT[best] - pct)) best = i;
+    return best + 1;
+}
+static void bri_show(int lv) {
+    if (lv != bri_lv || T - bri_t > 1.4) sfx_ex(SFX_CURSOR, 0.80f + 0.09f * lv, 0.8f);
+    bri_lv = lv; bri_t = T;
+    rumble(8, 0.25f);
+}
+/* the sun button: round the five levels, as the DSi's does */
+static void bri_set(int lv) {
+    bri_show(lv);
+    char sh[400]; snprintf(sh, sizeof sh, "%s/brightness.sh", cfg.home);
+    if (access(sh, X_OK)) return;                   /* (a desktop: only the bar) */
+    char cmd[520]; snprintf(cmd, sizeof cmd, "'%s' set %d >/dev/null 2>&1 &", sh, lv);
+    if (system(cmd)) {}
+}
+/* the script's file: changed by the hotkey (or by bri_set) */
+static void bri_poll_step(void) {
+    if (T - bri_poll < 0.1) return;
+    bri_poll = T;
+    struct stat st;
+    if (stat("/tmp/dsixl-brightness", &st)) return;
+    if (bri_seen && st.st_mtim.tv_sec == bri_mt.tv_sec && st.st_mtim.tv_nsec == bri_mt.tv_nsec) return;
+    bri_mt = st.st_mtim;
+    FILE *f = fopen("/tmp/dsixl-brightness", "r"); int lv = 0;
+    if (f) { if (fscanf(f, "%d", &lv) != 1) lv = 0; fclose(f); }
+    if (lv < 1 || lv > 5) return;
+    if (bri_seen) bri_show(lv); else bri_lv = lv;   /* (what it was before the menu started: no bar) */
+    bri_seen = 1;
+}
+
+static void sun_icon(Surf *s, float cx, float cy, float r, uint32_t c, int a) {
+    for (int i = 0; i < 8; i++) {
+        float an = i * PI_F / 4 + PI_F / 8;
+        disc(s, cx + cosf(an) * (r + 2.4f), cy + sinf(an) * (r + 2.4f), r * 0.32f + 0.35f, c, a);
+    }
+    disc(s, cx, cy, r, c, a);
+}
+
+/* the sun in the bottom left corner (the gear's partner) */
+#define SUN_X 18
+#define SUN_Y 166
+static void draw_sun_button(Surf *s, int alpha) {
+    int pr = tch.down && tch.zone == 12;
+    float y = SUN_Y + (pr ? 1 : 0);
+    rrect(s, SUN_X - 13 + 1, y - 8 + 2, 26, 16, 8, 0x000000, alpha * 30 / 255);
+    rrect(s, SUN_X - 13, y - 8, 26, 16, 8, 0xb8b8b8, alpha);
+    rrect_vgrad(s, SUN_X - 12, y - 7, 24, 14, 7, 0xffffff, 0xe6e6e6, alpha);
+    sun_icon(s, SUN_X, y, 2.6f + 0.25f * bri_lv, 0xe0a010, alpha);
+}
+
+/* the bar on the top screen: the sun and five steps, dropping in under the status bar and leaving after a moment */
+static void draw_bri_bar(Surf *s) {
+    float k = (float)(T - bri_t);
+    if (k < 0 || k > 1.7f) return;
+    float in_k = ease_out_back(sat(k / 0.24f)), out = 1 - smoothstep(1.3f, 1.7f, k);
+    int a = (int)(255 * out * sat(k / 0.1f));
+    float y = 22 + (1 - in_k) * -26, x = 128 - 46;
+    rrect(s, x + 1, y + 2, 92, 26, 9, 0x000000, a * 40 / 255);
+    rrect(s, x, y, 92, 26, 9, 0xb4b4b4, a);
+    rrect_vgrad(s, x + 1, y + 1, 90, 24, 8, 0xffffff, 0xe8e8e8, a);
+    sun_icon(s, x + 15, y + 13, 3.0f + 0.3f * bri_lv, 0xe0a010, a);
+    Accent ac = accent();
+    for (int i = 0; i < 5; i++) {
+        int h = 5 + i * 3, bx = (int)x + 32 + i * 11, by = (int)y + 20 - h;
+        int on = i < bri_lv;
+        float pop = (i == bri_lv - 1) ? 1 + 0.35f * (1 - ease_out_cubic(k / 0.25f)) : 1;
+        int ph = (int)roundf(h * pop);
+        rrect(s, bx, by - (ph - h), 8, ph, 2, on ? col_mix(ac.base, 0x000000, 40) : 0xc4c4c4, a);
+        rrect_vgrad(s, bx + 1, by - (ph - h) + 1, 6, ph - 2, 1.5f, on ? col_mix(ac.base, 0xffffff, 90) : 0xe2e2e2, on ? ac.base : 0xd2d2d2, a);
+    }
+}
+
 /* ---- the options window ---- */
 
 enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER, OPT_COUNT };
@@ -933,17 +1025,18 @@ static void squeezed(Surf *s, int font, int cx, int y, int max_w, uint32_t c, in
     img_free(&im);
 }
 
+/* the DSi XL's start, as it goes: both screens come up out of black together, the logo on the top one and the health
+ * and safety screen on the bottom one, while the start-up chime plays; a moment later "Touch the Touch Screen to
+ * continue." starts to pulse. A touch (only a touch, as on the DSi): a tap sound, the bottom screen goes white, then
+ * the top, and the menu slides in out of the white. */
+#define BOOT_IN     0.55f               /* out of black */
+#define BOOT_CHIME  0.08f
+#define BOOT_PROMPT 1.9f                /* "Touch the Touch Screen to continue." */
 static void draw_boot(Surf *top, Surf *bot, float t) {
-    /* from black to white, the logo and the chime, the text, then the wait for a touch */
-    int white = (int)(255 * smoothstep(0, 0.45f, t));
-    fill(top, 0x000000); fill(bot, 0x000000);
-    rect_blend(top, 0, 0, 256, 192, 0xffffff, white);
-    rect_blend(bot, 0, 0, 256, 192, 0xffffff, white);
-    float la = smoothstep(0.55f, 1.05f, t);
-    if (boot_logo.px) blit(top, &boot_logo, 128 - boot_logo.w / 2, 77 - boot_logo.h / 2, (int)(255 * la));
-    else text_center(top, FONT_XL, 128, 62, 0x000000, (int)(255 * la), "NINTENDO DSi");
-    float ta = smoothstep(0.9f, 1.4f, t);
-    int a = (int)(255 * ta);
+    fill(top, 0xffffff); fill(bot, 0xffffff);
+    if (boot_logo.px) blit(top, &boot_logo, 128 - boot_logo.w / 2, 77 - boot_logo.h / 2, 255);
+    else text_center(top, FONT_XL, 128, 62, 0x000000, 255, "NINTENDO DSi");
+    int a = 255;
     /* the health and safety screen (the layout of the DSi's) */
     int hw = text_w(FONT_HS, "WARNING \xe2\x80\x93 HEALTH AND SAFETY") + 17;
     warn_icon(bot, 128 - hw / 2.0f, 16, a);
@@ -952,8 +1045,13 @@ static void draw_boot(Surf *top, Surf *bot, float t) {
     for (int i = 0; i < 4; i++) squeezed(bot, FONT_MD, 128, 39 + i * 19, 214, 0x101010, a, body[i]);
     squeezed(bot, FONT_SM, 128, 117, 236, 0x101010, a, "TO GET AN EXTRA COPY FOR YOUR REGION, GO ONLINE AT");
     text_center(bot, FONT_MD, 128, 131, 0x2b9fd0, a, "www.nintendo.com/healthsafety/");
-    float pulse = 0.55f + 0.45f * cosf((float)(t - 1.6f) * 3.3f);
-    if (t > 1.6f) text_center(bot, FONT_MD, 128, 155, 0x505050, (int)(a * pulse), "Touch the Touch Screen to continue.");
+    /* the prompt fades in, then breathes */
+    float pk = smoothstep(BOOT_PROMPT, BOOT_PROMPT + 0.35f, t);
+    float pulse = t < BOOT_PROMPT + 0.35f ? 1 : 0.62f + 0.38f * cosf((float)(t - BOOT_PROMPT - 0.35f) * 3.1f);
+    if (t > BOOT_PROMPT) text_center(bot, FONT_MD, 128, 155, 0x505050, (int)(a * pk * pulse), "Touch the Touch Screen to continue.");
+    /* out of black: the whole screen together */
+    int black = (int)(255 * (1 - smoothstep(0, BOOT_IN, t)));
+    if (black) { rect_blend(top, 0, 0, 256, 192, 0x000000, black); rect_blend(bot, 0, 0, 256, 192, 0x000000, black); }
 }
 
 /* ---- init ---- */
@@ -962,6 +1060,7 @@ void ui_init(const UiStart *st) {
     char p[400];
     snprintf(p, sizeof p, "%s/assets/boot_logo.png", cfg.home);
     img_load(p, &boot_logo);
+    bri_lv = bri_from_system();
     for (int s = 0; s < SYS_COUNT; s++) {
         row[s].sel = 0;
         for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, cfg.last[s])) row[s].sel = i;
@@ -1058,6 +1157,7 @@ static void touch_update(void) {
         }
         if (opt_open) tch.zone = 3;
         else if (x >= GEAR_X - 15 && x < GEAR_X + 15 && y >= GEAR_Y - 10 && y < GEAR_Y + 10) tch.zone = 6;
+        else if (x >= SUN_X - 15 && x < SUN_X + 15 && y >= SUN_Y - 10 && y < SUN_Y + 10) tch.zone = 12;
         else if (y < 18) tch.zone = 1;
         else if (y >= 176) {
             tch.zone = 2;
@@ -1129,6 +1229,7 @@ static void touch_update(void) {
             if (i == opt_sel) opt_act(i, 1);
         } else if (tch.zone == 4) { opt_open = 0; opt_t = T; sfx(SFX_BACK); }
         else if (tch.zone == 6 && !tch.moved) gs_open_here();
+        else if (tch.zone == 12 && !tch.moved) bri_set(bri_lv % 5 + 1);
         else if (tch.zone == 7 && !tch.moved) gs_change(gs_sel, tch.x0 < (GS_X + 100 + GS_X + GS_W - 10) / 2 ? -1 : 1);
         else if (tch.zone == 9 && !tch.moved) gs_change(gs_sel, 1);
         else if (tch.zone == 8 && !tch.moved) { gs_sel = gs_n + (tch.x0 >= 128); gs_activate(); }
@@ -1288,8 +1389,8 @@ static void sound_parts_slam(void) {
 #define L_APEX   0.66f      /* risen to the top of the top screen */
 #define L_HANG   0.80f
 #define L_SLAM   0.93f      /* home */
-#define L_WHITE  1.45f
-#define L_END    1.85f
+#define L_FADE   1.40f      /* then both screens to black */
+#define L_END    1.90f
 
 static void launch_draw(Surf *top, Surf *bot, float t) {
     float cw, ch, cd; cart_size(l_sys, &cw, &ch, &cd);
@@ -1366,8 +1467,14 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     if (state == ST_BOOT) {
         draw_boot(top, bot, (float)st_t);
         static double cont_t = -1;
-        if (st_t > 0.6 && st_t - dt <= 0.6) sfx(SFX_BOOT);
-        if (cont_t < 0 && st_t > 1.0 && (any_pressed() || (cfg.boot_wait > 0 && st_t > cfg.boot_wait + 1.0))) { cont_t = st_t; sfx(SFX_CONTINUE); }
+        if (st_t > BOOT_CHIME && st_t - dt <= BOOT_CHIME) sfx(SFX_BOOT);
+        /* a touch on the bottom screen once the screens are up; buttons only after a long while (a touchscreen that
+         * doesn't answer must not lock you out), or after boot_wait */
+        int touched = in.touch[1] && !pin.touch[1];
+        if (cont_t < 0 && st_t > BOOT_IN && (touched || (st_t > 12 && any_pressed()) || (cfg.boot_wait > 0 && st_t > cfg.boot_wait + 1.0))) {
+            cont_t = st_t; sfx(SFX_CONTINUE); rumble(15, 0.4f);
+            if (touched) tap_burst(1, (float)in.tx[1], (float)in.ty[1]);
+        }
         if (cont_t >= 0) {
             float k = (float)(st_t - cont_t);
             rect_blend(bot, 0, 0, 256, 192, 0xffffff, (int)(255 * smoothstep(0, 0.3f, k)));
@@ -1375,15 +1482,25 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             if (k > 0.5f) {
                 state = ST_MENU; st_t = 0; intro_t = 0; music_play(); sfx(SFX_WHOOSH); last_input = T;
                 if (is_birthday() && !confetti_done) { confetti(); confetti_done = 1; }
+                /* A held through the start: straight on into the game played last */
+                if ((in.held & BIT(btn_a())) && has_cont) {
+                    sys = V_FAV; cfg.sys = sys; row[V_FAV].sel = 0; row[V_FAV].pos.x = 0; logo_cur = cur_game(sys);
+                    auto_go_t = T + 0.7;
+                }
             }
         }
+        parts_draw(bot, 1);
         pin = in;
         return exit_code;
     }
 
     if (in.held != pin.held || in.touch[0] || in.touch[1]) last_input = T;
     if (in.touch[0] && !pin.touch[0]) tap_burst(0, (float)in.tx[0], (float)in.ty[0]);   /* the top screen is a touchscreen too */
-    if (state == ST_MENU) menu_update(fdt);
+    if (state == ST_MENU) {
+        menu_update(fdt);
+        bri_poll_step();
+        if (auto_go_t > 0 && T >= auto_go_t) { auto_go_t = -1; if (sys == V_FAV && has_cont && row[V_FAV].sel == 0 && !opt_open && !gs_open) start_launch(); }
+    }
     tint_step(fdt);
     float intro = intro_t >= 0 ? ease_out_cubic((float)((st_t - intro_t) / 0.55)) : 1;
     if (state == ST_LAUNCH) intro = 1;
@@ -1417,6 +1534,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         } else draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20, cfg.top_view);
     }
     snow(top, fdt);
+    if (state == ST_MENU) draw_bri_bar(top);
 
     /* ---- bottom ---- */
     if (state == ST_LAUNCH) {
@@ -1462,7 +1580,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             }
             if (t >= 1.25f) { rg = 0; ret_t = -1; music_play(); }
         }
-        if (state == ST_MENU && !gs_open) draw_gear_button(bot, (int)(255 * intro * (1 - gs_anim)));
+        if (state == ST_MENU && !gs_open) { draw_gear_button(bot, (int)(255 * intro * (1 - gs_anim))); draw_sun_button(bot, (int)(255 * intro * (1 - gs_anim))); }
         draw_game_settings(bot, top, gs_anim);
         draw_options(bot, opt_anim);
     }
@@ -1481,15 +1599,17 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         float k = (float)((st_t - intro_t) / 0.35);
         if (k < 1) { rect_blend(top, 0, 0, 256, 192, 0xffffff, (int)(255 * (1 - k))); rect_blend(bot, 0, 0, 256, 192, 0xffffff, (int)(255 * (1 - k))); }
     }
-    if (rg && ret_t >= 0 && ret_t < 0.35) {
-        int a = (int)(255 * (1 - ret_t / 0.35));
-        rect_blend(top, 0, 0, 256, 192, 0xffffff, a); rect_blend(bot, 0, 0, 256, 192, 0xffffff, a);
+    if (rg && ret_t >= 0 && ret_t < 0.4) {
+        /* back from the game: out of black */
+        int a = (int)(255 * (1 - ease_in_out((float)(ret_t / 0.4))));
+        rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
     }
     if (state == ST_LAUNCH) {
         float t = (float)st_t;
-        if (t > L_WHITE) {
-            int a = (int)(255 * smoothstep(L_WHITE, L_END - 0.1f, t));
-            rect_blend(top, 0, 0, 256, 192, 0xffffff, a); rect_blend(bot, 0, 0, 256, 192, 0xffffff, a);
+        if (t > L_FADE) {
+            /* to black, held a moment: the game takes the screens from black, so there is no seam */
+            int a = (int)(255 * ease_in_out((t - L_FADE) / (L_END - 0.12f - L_FADE)));
+            rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
         }
         if (t >= L_END) { write_launch(); return EXIT_LAUNCH; }
     }

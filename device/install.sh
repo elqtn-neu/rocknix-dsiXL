@@ -10,10 +10,19 @@
 set -e
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 D=/storage/.config/dsixl
+# the Anbernic button + volume: ROCKNIX's input service runs these (the DSi's five brightness levels) instead of its
+# own 5% steps; put back on uninstall. The service reads them when it starts.
+hotkeys() {
+    bash -c '. /etc/profile.d/001-functions 2>/dev/null || exit 0
+        if [ "$1" = on ]; then set_setting key.function.a.up "$2/brightness.sh up"; set_setting key.function.a.down "$2/brightness.sh down"
+        else case "$(get_setting key.function.a.up)" in *dsixl/brightness.sh*) del_setting key.function.a.up; del_setting key.function.a.down ;; esac; fi' _ "$1" "$D" || true
+    systemctl restart input.service 2>/dev/null || true
+}
 case "$1" in
 --uninstall)
     rm -f $D/enabled /storage/.config/autostart/zz-dsixl "/storage/roms/ports/DSi Menu.sh"
     if cmp -s $D/start_es.sh /usr/bin/start_es.sh 2>/dev/null; then umount -l /usr/bin/start_es.sh; fi
+    hotkeys off
     rm -rf $D
     echo "Removed. /storage/roms/dsixl (art, sounds) is still there."
     exit 0 ;;
@@ -46,11 +55,12 @@ BIN=$SRC/build/dsixl-aarch64; [ -f $BIN ] || BIN=$SRC/bin/dsixl-aarch64
 mkdir -p $D/data $D/cache /storage/roms/dsixl/media/nds /storage/roms/dsixl/media/gba /storage/roms/dsixl/sounds
 cp $BIN $D/dsixl.new && chmod 755 $D/dsixl.new && mv -f $D/dsixl.new $D/dsixl
 rm -rf $D/assets && cp -r $SRC/assets $D/assets
-for f in session.sh restore.sh start_es.sh launch.sh; do cp $SRC/device/$f $D/$f; chmod 755 $D/$f; done
+for f in session.sh restore.sh start_es.sh launch.sh brightness.sh; do cp $SRC/device/$f $D/$f; chmod 755 $D/$f; done
 cp $SRC/tools/dsixl-scrape.py $D/dsixl-scrape.py
 cp $SRC/VERSION $D/VERSION 2>/dev/null || true
 # the recommended emulator settings, only where ROCKNIX has none of its own yet (yours are never touched)
 DSIXL_HOME=$D $D/dsixl --setup-emulators || true
+hotkeys on
 cp $SRC/docs/sounds.md /storage/roms/dsixl/sounds/README.md 2>/dev/null || true
 mkdir -p /storage/.config/autostart
 cp $SRC/device/autostart-dsixl /storage/.config/autostart/zz-dsixl && chmod 755 /storage/.config/autostart/zz-dsixl
