@@ -12,3 +12,10 @@ typedef struct {
 void ui_init(const UiStart *st);
 /* one frame: input in, time step dt; returns -1 to go on, else the exit code */
 int ui_frame(const Input *in, double dt, Surf *top, Surf *bot);
+
+/* power: how much the menu needs the screens now. 0 all of it; 1 calm (nothing touched for a while: 30 frames a
+ * second do); 2 dim the screens; 3 screens off (no frames at all: call ui_idle_input instead of ui_frame) */
+enum { PW_FULL, PW_CALM, PW_DIM, PW_OFF };
+int ui_power(void);
+void ui_idle_input(const Input *in);    /* with the screens off: a button or a touch wakes them (and does nothing else) */
+void ui_resumed(void);                  /* the handheld was asleep (the lid): the menu wakes up */

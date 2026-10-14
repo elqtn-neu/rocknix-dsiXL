@@ -20,6 +20,7 @@
 #include "audio.h"
 #include "rumble.h"
 #include "gamecfg.h"
+#include "power.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -91,6 +92,9 @@ static int sb_press; static double sb_press_t;
 
 /* options */
 static int opt_open; static double opt_t; static int opt_sel; static float opt_anim;
+static int optv[32], optn;              /* the options shown (ids), built when the window opens */
+static Spring opt_scroll; static float opt_drag0;   /* the list's first row (scrolling), where a drag started */
+static void opt_open_now(void);
 /* the emulators' settings (SELECT, the gear, Options): a page for the DS, a page for the GBA (L/R), each its options,
  * then Recommended and Done. They're for every game of the system. */
 static int gs_open; static float gs_anim; static int gs_sys, gs_sel, gs_n;
@@ -121,7 +125,9 @@ static Flake flakes[30];
 static double shake_t = -10; static float shake_amp;
 
 static Img boot_logo;
-static double auto_go_t = -1;           /* A held through the start: "continue" starts by itself at this time */
+static double auto_go_t = -1;
+/* power: the screens dim and go off when nothing is touched; the input that wakes them does nothing else */
+static int pw_mode; static int swallow; static double wake_t = -10; static int wake_black; static uint32_t raw_held; static int raw_touch;           /* A held through the start: "continue" starts by itself at this time */
 
 /* brightness: the DSi's five levels (device/brightness.sh), changed with the Anbernic button + volume (ROCKNIX's
  * input service runs the script, the menu sees its file change) or the sun button; a bar shows on the top screen */
@@ -786,9 +792,55 @@ static void draw_bri_bar(Surf *s) {
     }
 }
 
+/* ---- the battery: a notice on the top screen when it runs low, and when the charger goes in ---- */
+
+static double note_t = -10; static char note_txt[64]; static int note_kind;   /* 0 low, 1 charging */
+static void notice(int kind, const char *txt) { note_kind = kind; note_t = T; snprintf(note_txt, sizeof note_txt, "%s", txt); }
+static void battery_watch(void) {
+    static double at = -10; static int prev = -1, prev_chg = -1;
+    if (T - at < 1) return;
+    at = T;
+    int chg, lv = battery_level(&chg);
+    if (lv < 0) return;
+    if (prev >= 0 && !chg) {
+        if (prev > 5 && lv <= 5) { notice(0, "Battery very low: charge now."); sfx(SFX_ERROR); rumble_double(30, 0.6f); }
+        else if (prev > 15 && lv <= 15) { notice(0, "Battery low: charge soon."); sfx(SFX_ERROR); rumble(30, 0.5f); }
+    }
+    if (prev_chg == 0 && chg) { notice(1, "Charging"); sfx_pitch(SFX_SELECT, 1.3f); rumble(20, 0.4f); }
+    prev = lv; prev_chg = chg;
+}
+static void draw_notice(Surf *s) {
+    float k = (float)(T - note_t);
+    if (k < 0 || k > 4) return;
+    float in_k = ease_out_back(sat(k / 0.3f)), out = 1 - smoothstep(3.5f, 4, k);
+    int a = (int)(255 * out * sat(k / 0.1f));
+    int tw = text_w(FONT_MD, note_txt), w = tw + 40, x = 128 - w / 2;
+    float y = 160 + (1 - in_k) * 40;
+    rrect(s, x + 1, y + 2, w, 22, 9, 0x000000, a * 40 / 255);
+    rrect(s, x, y, w, 22, 9, note_kind ? 0x6aa84f : 0xd8452e, a);
+    rrect_vgrad(s, x + 1, y + 1, w - 2, 20, 8, 0xffffff, 0xeeeeee, a);
+    /* a battery: red and blinking when low, filling up when charging */
+    int bx = x + 9, by = (int)y + 7;
+    rect_blend(s, bx, by + 2, 2, 4, 0x505050, a); rect_blend(s, bx + 2, by, 14, 9, 0x505050, a); rect_blend(s, bx + 3, by + 1, 12, 7, 0xffffff, a);
+    if (note_kind) { int f = ((int)(k * 3)) % 5; for (int i = 0; i < f; i++) rect_blend(s, bx + 12 - i * 3, by + 2, 2, 5, 0x6aa84f, a); }
+    else if (((int)(k * 3)) & 1) rect_blend(s, bx + 12, by + 2, 2, 5, 0xd8452e, a);
+    text(s, FONT_MD, x + 30, (int)y + 1, C_TEXT, a, note_txt);
+}
+
 /* ---- the options window ---- */
 
 enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER, OPT_COUNT };
+
+static void opt_build(void) {
+    optn = 0;
+    for (int i = 0; i < OPT_COUNT; i++) optv[optn++] = i;
+}
+static void opt_open_now(void) {
+    opt_build();
+    opt_open = 1; opt_t = T; opt_sel = 0; opt_scroll.x = 0; opt_scroll.v = 0;
+    sfx(SFX_OPEN);
+}
+static int opt_id(int i) { return i >= 0 && i < optn ? optv[i] : -1; }
 
 static void opt_label(int i, char *b, int n) {
     switch (i) {
@@ -828,26 +880,76 @@ static void opt_act(int i, int dir) {
 }
 
 #define OPT_X 30
-#define OPT_Y 6
+#define OPT_Y 4
 #define OPT_W 196
 #define OPT_ROW 16
+#define OPT_VIS 8                       /* rows seen at once: the list scrolls */
+#define OPT_LIST_Y (OPT_Y + 24)
+
+/* the window's last line: the battery (and what it's drawing), the games card's free space */
+static void opt_info(char *b, int n) {
+    int chg, lv = battery_level(&chg);
+    float w, h, fg, tg;
+    char bat[64] = "", disk[64] = "";
+    if (lv >= 0) {
+        if (chg) snprintf(bat, sizeof bat, "%d%%, charging", lv);
+        else if (!power_draw(&w, &h) && h > 0) snprintf(bat, sizeof bat, "%d%%, %dh %02dm left", lv, (int)h, (int)(fmodf(h, 1) * 60));
+        else snprintf(bat, sizeof bat, "%d%%", lv);
+    }
+    if (!disk_free_gb(cfg.dir_nds, &fg, &tg) && tg > 0.05f) snprintf(disk, sizeof disk, "%.1f GB free", fg);
+    snprintf(b, (size_t)n, "%s%s%s", bat, bat[0] && disk[0] ? "  \xc2\xb7  " : "", disk);
+}
 
 static void draw_options(Surf *s, float k) {
     if (k <= 0.001f) return;
     rect_blend(s, 0, 0, 256, 192, 0x000000, (int)(90 * k));
     float y = OPT_Y + (1 - ease_out_back(k)) * 140;
     int a = (int)(255 * MIN(1.0f, k * 1.5f));
-    window(s, OPT_X, y, OPT_W, 30 + OPT_COUNT * OPT_ROW + 6, "Options", a);
-    for (int i = 0; i < OPT_COUNT; i++) {
-        char b[64]; opt_label(i, b, sizeof b);
-        float by = y + 26 + i * OPT_ROW;
-        float press = (tch.down && tch.zone == 3 && opt_sel == i) ? 1 : 0;
-        button(s, OPT_X + 8, by, OPT_W - 16, OPT_ROW - 2, b, i == opt_sel, press, a);
-        if (i == OPT_COLOR) {
-            rrect(s, OPT_X + OPT_W - 26, by + 3, 10, 10, 3, fav_color(cfg.color), a);
-            rrect_line(s, OPT_X + OPT_W - 26, by + 3, 10, 10, 3, 1, 0x505050, a);
+    int vis = MIN(optn, OPT_VIS);
+    window(s, OPT_X, y, OPT_W, 28 + vis * OPT_ROW + 17, "Options", a);
+    Surf list = *s; surf_clip(&list, OPT_X + 2, (int)y + 25, OPT_W - 4, vis * OPT_ROW);
+    float sc = opt_scroll.x;
+    for (int i = MAX(0, (int)sc - 1); i < MIN(optn, (int)sc + vis + 2); i++) {
+        int id = optv[i];
+        char b[64]; opt_label(id, b, sizeof b);
+        float by = y + 26 + (i - sc) * OPT_ROW;
+        float press = (tch.down && tch.zone == 3 && opt_sel == i && !tch.moved) ? 1 : 0;
+        button(&list, OPT_X + 8, by, OPT_W - 22, OPT_ROW - 2, b, i == opt_sel, press, a);
+        if (id == OPT_COLOR) {
+            rrect(&list, OPT_X + OPT_W - 32, by + 3, 10, 10, 3, fav_color(cfg.color), a);
+            rrect_line(&list, OPT_X + OPT_W - 32, by + 3, 10, 10, 3, 1, 0x505050, a);
         }
     }
+    /* where in the list: a thin bar on the right */
+    if (optn > vis) {
+        float th = vis * OPT_ROW - 2, bh = MAX(10.0f, th * vis / optn), by = y + 26 + (th - bh) * sc / (optn - vis);
+        rrect(s, OPT_X + OPT_W - 10, y + 26, 4, th, 2, 0xdedede, a);
+        rrect(s, OPT_X + OPT_W - 10, by, 4, bh, 2, accent().base, a);
+    }
+    static double info_t = -10; static char info[128];
+    if (T - info_t > 2) { info_t = T; opt_info(info, sizeof info); }
+    hline(s, OPT_X + 8, OPT_X + OPT_W - 9, (int)(y + 28 + vis * OPT_ROW), 0xe0e0e0, a);
+    /* a little battery before it */
+    int iw = text_w(FONT_SM, info), ix = 128 - (iw + 14) / 2, iy = (int)(y + 33 + vis * OPT_ROW);
+    if (info[0] && battery_level(0) >= 0) {
+        rect_blend(s, ix, iy + 1, 1, 3, 0x8a8a8a, a); rect_blend(s, ix + 1, iy, 9, 5, 0x8a8a8a, a);
+        rect_blend(s, ix + 2, iy + 1, 7, 3, 0xffffff, a);
+        rect_blend(s, ix + 9 - MAX(1, battery_level(0) * 7 / 100), iy + 1, MAX(1, battery_level(0) * 7 / 100), 3, 0x6aa84f, a);
+        ix += 14;
+    }
+    text(s, FONT_SM, ix, iy - 5, 0x8a8a8a, a, info);
+}
+
+/* the selection stays in sight */
+static void opt_follow(float dt) {
+    int vis = MIN(optn, OPT_VIS);
+    static float want;
+    if (!(tch.down && tch.zone == 3 && tch.moved)) {
+        if (opt_sel < want) want = (float)opt_sel;
+        if (opt_sel > want + vis - 1) want = (float)(opt_sel - vis + 1);
+        want = clampf(want, 0, (float)MAX(0, optn - vis));
+        spring_step(&opt_scroll, want, 500, 40, dt);
+    } else want = clampf(roundf(opt_scroll.x), 0, (float)MAX(0, optn - vis));
 }
 
 /* ---- the emulators' settings ---- */
@@ -1170,8 +1272,10 @@ static void touch_update(void) {
             if (vn(sys) && abs(x - 128) < sel_w_now(sys) * 0.6f + 6 && y > 60 && y < 160) tch.zone = 5;   /* on the selected one */
         }
         if (tch.zone == 3) {
-            int i = (int)((y - (OPT_Y + 26)) / OPT_ROW);
-            if (x >= OPT_X && x < OPT_X + OPT_W && y >= OPT_Y + 26 && i >= 0 && i < OPT_COUNT) { if (i != opt_sel) sfx(SFX_CURSOR); opt_sel = i; }
+            int vis = MIN(optn, OPT_VIS), i = (int)floorf((y - (OPT_Y + 26)) / (float)OPT_ROW + opt_scroll.x);
+            opt_drag0 = opt_scroll.x;
+            if (x >= OPT_X && x < OPT_X + OPT_W && y >= OPT_Y + 26 && y < OPT_Y + 26 + vis * OPT_ROW && i >= 0 && i < optn) { if (i != opt_sel) sfx(SFX_CURSOR); opt_sel = i; }
+            else if (x >= OPT_X && x < OPT_X + OPT_W && y >= OPT_Y && y < OPT_Y + 28 + vis * OPT_ROW + 17) tch.zone = 13;   /* the window's edge: nothing */
             else tch.zone = 4;          /* outside the window: closes it */
         }
         return;
@@ -1193,6 +1297,11 @@ static void touch_update(void) {
             if (dtt > 0.001) { tch.vel = lerpf(tch.vel, (float)(-(x - tch.lastx) / G.spacing / dtt), 0.5f); tch.lastx = (float)x; tch.lastt = T; }
             int n = CLAMP((int)roundf(row[sys].pos.x), 0, vn(sys) - 1);
             if (n != row[sys].sel) { select_game(sys, n, 1); rumble(7, 0.25f); }   /* a ratchet under the finger */
+        }
+        if (tch.zone == 3 && tch.moved) {
+            /* dragging the list */
+            int vis = MIN(optn, OPT_VIS);
+            opt_scroll.x = clampf(opt_drag0 - (y - tch.y0) / (float)OPT_ROW, 0, (float)MAX(0, optn - vis)); opt_scroll.v = 0;
         }
         if (tch.zone == 2 && vn(sys)) {
             int z, i = scroll_bar_hit(x, 176, vn(sys), 5, &z);
@@ -1225,8 +1334,8 @@ static void touch_update(void) {
             }
         } else if (tch.zone == 1 && !tch.moved) switch_sys(tch.x0 < 90 ? V_NDS : tch.x0 < 166 ? V_FAV : V_GBA);
         else if (tch.zone == 3 && !tch.moved) {
-            int i = (int)((tch.y - (OPT_Y + 26)) / OPT_ROW);
-            if (i == opt_sel) opt_act(i, 1);
+            int i = (int)floorf((tch.y - (OPT_Y + 26)) / (float)OPT_ROW + opt_scroll.x);
+            if (i == opt_sel) opt_act(opt_id(i), 1);
         } else if (tch.zone == 4) { opt_open = 0; opt_t = T; sfx(SFX_BACK); }
         else if (tch.zone == 6 && !tch.moved) gs_open_here();
         else if (tch.zone == 12 && !tch.moved) bri_set(bri_lv % 5 + 1);
@@ -1275,11 +1384,11 @@ static void toggle_fav(void) {
 static void menu_update(float dt) {
     if (gs_open) gs_update();
     else if (opt_open) {
-        if (repeat(B_UP)) { opt_sel = (opt_sel + OPT_COUNT - 1) % OPT_COUNT; sfx(SFX_CURSOR); }
-        if (repeat(B_DOWN)) { opt_sel = (opt_sel + 1) % OPT_COUNT; sfx(SFX_CURSOR); }
-        if (repeat(B_LEFT) && opt_sel == OPT_COLOR) opt_act(OPT_COLOR, -1);
-        if (repeat(B_RIGHT) && opt_sel == OPT_COLOR) opt_act(OPT_COLOR, 1);
-        if (pressed(btn_a())) opt_act(opt_sel, 1);
+        if (repeat(B_UP)) { opt_sel = (opt_sel + optn - 1) % optn; sfx(SFX_CURSOR); }
+        if (repeat(B_DOWN)) { opt_sel = (opt_sel + 1) % optn; sfx(SFX_CURSOR); }
+        if (repeat(B_LEFT) && opt_id(opt_sel) == OPT_COLOR) opt_act(OPT_COLOR, -1);
+        if (repeat(B_RIGHT) && opt_id(opt_sel) == OPT_COLOR) opt_act(OPT_COLOR, 1);
+        if (pressed(btn_a())) opt_act(opt_id(opt_sel), 1);
         if (pressed(btn_b()) || pressed(B_START)) { opt_open = 0; opt_t = T; sfx(SFX_BACK); }
     } else if (intro_t < 0 || T - intro_t > 0.25) {
         /* left / right: a step at once; held, a glide that picks up speed; let go, it settles on the next one */
@@ -1317,7 +1426,7 @@ static void menu_update(float dt) {
         /* A: the cartridge sinks in while it's held; letting go starts it */
         if (pressed(btn_a()) && vn(sys)) { a_hold = 1; rumble(10, 0.3f); }
         if (a_hold && !(in.held & BIT(btn_a()))) { a_hold = 0; start_launch(); }
-        if (pressed(B_START)) { opt_open = 1; opt_t = T; opt_sel = 0; sfx(SFX_OPEN); }
+        if (pressed(B_START)) opt_open_now();
         if (pressed(B_X)) {           /* the top screen: the logo, or the photo */
             cfg.top_view = !cfg.top_view; view_t = T; state_save();
             sfx_pitch(SFX_TAB, cfg.top_view ? 1.12f : 0.92f); rumble(12, 0.3f);
@@ -1369,6 +1478,7 @@ static void menu_update(float dt) {
     /* the jelly settles; the selection's hop when the row arrives */
     for (int s = 0; s < V_COUNT; s++) for (int i = MAX(0, row[s].sel - 5); i <= MIN(fx_n[s] - 1, row[s].sel + 5); i++) spring_step(&fx[s][i].wob, 0, 430, 7.5f, dt);
     opt_anim = clampf(opt_anim + (opt_open ? dt : -dt) / 0.22f, 0, 1);
+    if (opt_open) opt_follow(dt);
     gs_anim = clampf(gs_anim + (gs_open ? dt : -dt) / 0.24f, 0, 1);
 }
 
@@ -1456,8 +1566,43 @@ static void launch_draw(Surf *top, Surf *bot, float t) {
     draw_slot_front(top, rise, cw * sc + 8, t >= L_SLAM ? ((int)((t - L_SLAM) * 8) % 2 ? 2 : 1) : 0);
 }
 
+static int raw_new_input(const Input *i) {
+    int t = i->touch[0] || i->touch[1];
+    int n = (i->held & ~raw_held) != 0 || (t && !raw_touch);
+    raw_held = i->held; raw_touch = t;
+    return n;
+}
+static void wake(int from_black) {
+    if (pw_mode >= PW_DIM) { wake_t = T; wake_black = from_black; if (cfg.music && state == ST_MENU) music_fade(1, 0.6f); }
+    swallow = 1; last_input = T; pw_mode = PW_FULL;
+}
+
+int ui_power(void) { return pw_mode; }
+void ui_idle_input(const Input *i) { if (raw_new_input(i)) wake(1); }
+void ui_resumed(void) {
+    /* the lid opened: out of black, the open sound */
+    pw_mode = PW_DIM; wake(1); swallow = 0;
+    sfx(SFX_OPEN);
+}
+static void pw_step(void) {
+    double idle = T - last_input;
+    int m = PW_FULL;
+    if (state == ST_LAUNCH || rg || auto_go_t > 0) m = PW_FULL;
+    else if (cfg.screen_off_after > 0 && idle > cfg.screen_off_after) m = PW_OFF;
+    else if (cfg.dim_after > 0 && idle > cfg.dim_after) m = PW_DIM;
+    else if (idle > 30) m = PW_CALM;
+    if (m == PW_OFF && pw_mode != PW_OFF) music_fade(0, 1.0f);
+    pw_mode = m;
+}
+
 int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     pin = in; in = *input;
+    /* the input that wakes dimmed screens is only that: nothing reacts to it until it's let go */
+    if (raw_new_input(input) && pw_mode >= PW_DIM) wake(0);
+    if (swallow) {
+        if (!input->held && !input->touch[0] && !input->touch[1]) swallow = 0;
+        in.held = 0; in.touch[0] = in.touch[1] = 0;
+    }
     T += dt; st_t += dt;
     if (in.quit) return EXIT_QUIT;
     float fdt = (float)MIN(dt, 0.05);
@@ -1465,6 +1610,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     parts_step(fdt);
 
     if (state == ST_BOOT) {
+        if (in.held != pin.held || in.touch[1]) last_input = T;
         draw_boot(top, bot, (float)st_t);
         static double cont_t = -1;
         if (st_t > BOOT_CHIME && st_t - dt <= BOOT_CHIME) sfx(SFX_BOOT);
@@ -1490,7 +1636,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             }
         }
         parts_draw(bot, 1);
-        pin = in;
+        pw_step();
         return exit_code;
     }
 
@@ -1499,6 +1645,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     if (state == ST_MENU) {
         menu_update(fdt);
         bri_poll_step();
+        battery_watch();
         if (auto_go_t > 0 && T >= auto_go_t) { auto_go_t = -1; if (sys == V_FAV && has_cont && row[V_FAV].sel == 0 && !opt_open && !gs_open) start_launch(); }
     }
     tint_step(fdt);
@@ -1534,7 +1681,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         } else draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20, cfg.top_view);
     }
     snow(top, fdt);
-    if (state == ST_MENU) draw_bri_bar(top);
+    if (state == ST_MENU) { draw_bri_bar(top); draw_notice(top); }
 
     /* ---- bottom ---- */
     if (state == ST_LAUNCH) {
@@ -1613,6 +1760,11 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         }
         if (t >= L_END) { write_launch(); return EXIT_LAUNCH; }
     }
+    if (wake_black && T - wake_t < 0.35) {
+        int a = (int)(255 * (1 - ease_out_cubic((float)((T - wake_t) / 0.35))));
+        rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
+    }
+    pw_step();
     if (exit_code >= 0 && exit_code != EXIT_LAUNCH) { state_save(); return exit_code; }
     return -1;
 }

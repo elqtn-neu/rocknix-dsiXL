@@ -48,6 +48,7 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
       0|143) fails=0; ARGS="--no-boot" ;;                        # the exit hotkey, or closed: straight back
       *)
         # a crash, or no display (3): once more, then EmulationStation rather than black screens
+        $D/brightness.sh apply          # (it may have had the screens dimmed or off to save power)
         NOW=$(cut -d' ' -f1 /proc/uptime)
         if [ "$(echo "$NOW $T0" | awk '{ print ($1 - $2 < 15) }')" = 1 ]; then fails=$((fails + 1)); fi
         if [ $fails -ge 2 ]; then

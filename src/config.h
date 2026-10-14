@@ -10,6 +10,7 @@ typedef struct {
     int boot_splash;                /* 1: the health and safety screen at start; 0: straight to the menu */
     int boot_wait;                  /* 0: it waits for a touch or a button, as the DSi; n: continues after n s */
     int swap_ab;                    /* Nintendo layout (A right) is the default */
+    int dim_after, screen_off_after;/* seconds untouched before the screens dim, and go off (0: never) */
     int bday_month, bday_day;       /* the user's birthday (0: not set), as the DS keeps it */
     char dir_nds[256], dir_gba[256], media[256], sounds[256];
     char home[256], cache[300];
