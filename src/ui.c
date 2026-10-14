@@ -976,7 +976,7 @@ static void draw_notice(Surf *s) {
 /* ---- the options window ---- */
 
 enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER,
-       OPT_WIFI, OPT_TZ, OPT_ART, OPT_UPDATE, OPT_SORT, OPT_HIDE, OPT_SHOWHIDDEN, OPT_CONTROLS, OPT_ALBUM, OPT_COUNT };
+       OPT_WIFI, OPT_TZ, OPT_ART, OPT_UPDATE, OPT_SORT, OPT_HIDE, OPT_SHOWHIDDEN, OPT_CONTROLS, OPT_ALBUM, OPT_LCD, OPT_COUNT };
 static void flows_on_options_open(void);
 static void opt_label_more(int i, char *b, int n);
 static void opt_act_more(int i);
@@ -984,7 +984,7 @@ static int update_found(void);
 
 static void opt_build(void) {
     static const int order[] = { OPT_EMU, OPT_SORT, OPT_HIDE, OPT_SHOWHIDDEN, OPT_ALBUM, OPT_ART, OPT_WIFI, OPT_TZ, OPT_COLOR,
-                                 OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_CONTROLS, OPT_RESCAN, OPT_ES, OPT_POWER };
+                                 OPT_LCD, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_CONTROLS, OPT_RESCAN, OPT_ES, OPT_POWER };
     optn = 0;
     if (update_found()) optv[optn++] = OPT_UPDATE;      /* a newer release on the card: first */
     for (int i = 0; i < ARRAY_LEN(order); i++) {
@@ -1009,6 +1009,7 @@ static void opt_label(int i, char *b, int n) {
     case OPT_SFX: snprintf(b, (size_t)n, "Sound effects: %s", cfg.sfx ? "On" : "Off"); break;
     case OPT_MUSIC: snprintf(b, (size_t)n, "Music: %s", cfg.music ? "On" : "Off"); break;
     case OPT_RUMBLE: snprintf(b, (size_t)n, "Vibration: %s", cfg.rumble ? "On" : "Off"); break;
+    case OPT_LCD: snprintf(b, (size_t)n, "Screen: %s", cfg.lcd ? "DSi LCD" : "Plain pixels"); break;
     case OPT_RESCAN: snprintf(b, (size_t)n, "Look for new games"); break;
     case OPT_ES: snprintf(b, (size_t)n, "Exit to EmulationStation"); break;
     case OPT_POWER: snprintf(b, (size_t)n, "Power off"); break;
@@ -1040,6 +1041,7 @@ static void opt_act(int i, int dir) {
     case OPT_CLOCK: cfg.clock24 = !cfg.clock24; sfx_pitch(SFX_TOGGLE, cfg.clock24 ? 1.0f : 0.84f); config_save(); break;
     case OPT_SFX: cfg.sfx = !cfg.sfx; sfx(SFX_TOGGLE); config_save(); break;
     case OPT_MUSIC: cfg.music = !cfg.music; if (cfg.music) music_play(); else music_stop(); sfx_pitch(SFX_TOGGLE, cfg.music ? 1.0f : 0.84f); config_save(); break;
+    case OPT_LCD: cfg.lcd = !cfg.lcd; plat_set_lcd(cfg.lcd); sfx_pitch(SFX_TOGGLE, cfg.lcd ? 1.0f : 0.84f); config_save(); break;
     case OPT_RUMBLE: cfg.rumble = !cfg.rumble; sfx_pitch(SFX_TOGGLE, cfg.rumble ? 1.0f : 0.84f); config_save(); rumble(30, 0.6f); break;
     case OPT_RESCAN: {
         sfx(SFX_SELECT);
@@ -1289,18 +1291,22 @@ static void gs_update(void) {
 
 /* ---- the boot screens ---- */
 
-static void warn_icon(Surf *s, float x, float y, int a) {
-    tri_fill(s, x + 7, y, x + 14.5f, y + 13, x - 0.5f, y + 13, 0x000000, a);
-    tri_fill(s, x + 7, y + 2.2f, x + 12.6f, y + 11.8f, x + 1.4f, y + 11.8f, 0xf8d81c, a);
-    rect_blend(s, (int)x + 6, (int)y + 4, 2, 5, 0x000000, a);
-    rect_blend(s, (int)x + 6, (int)y + 10, 2, 1, 0x000000, a);
+/* centred ASCII text with each letter a pixel closer, the spaces kept (the DSi's condensed small print) */
+static void text_tight(Surf *s, int font, int cx, int y, uint32_t c, int a, const char *str) {
+    int n = (int)strlen(str), w = text_w(font, str);
+    for (int i = 0; i + 1 < n; i++) if (str[i] != ' ' && str[i + 1] != ' ') w--;
+    int x = cx - w / 2;
+    for (int i = 0; i < n; i++) {
+        char ch[2] = { str[i], 0 };
+        x = text(s, font, x, y, c, a, ch) - (i + 1 < n && str[i] != ' ' && str[i + 1] != ' ');
+    }
 }
 
-static void squeezed(Surf *s, int font, int cx, int y, int max_w, uint32_t c, int a, const char *str) {
-    Img im; if (text_to_img(font, str, &im, c)) return;
-    float w = MIN((float)im.w, (float)max_w);
-    blit_scaled(s, &im, roundf(cx - w / 2), (float)y, w, (float)im.h, a, w < im.w);
-    img_free(&im);
+static void warn_icon(Surf *s, float x, float y, int a) {
+    tri_fill(s, x + 5.5f, y, x + 11.5f, y + 10.5f, x - 0.5f, y + 10.5f, 0x000000, a);
+    tri_fill(s, x + 5.5f, y + 2, x + 9.9f, y + 9.5f, x + 1.1f, y + 9.5f, 0xf8d81c, a);
+    rect_blend(s, (int)x + 5, (int)y + 3, 1, 4, 0x000000, a);
+    rect_blend(s, (int)x + 5, (int)y + 8, 1, 1, 0x000000, a);
 }
 
 /* the DSi XL's start, as it goes: both screens come up out of black together, the logo on the top one and the health
@@ -1316,17 +1322,17 @@ static void draw_boot(Surf *top, Surf *bot, float t) {
     else text_center(top, FONT_XL, 128, 62, 0x000000, 255, "NINTENDO DSi");
     int a = 255;
     /* the health and safety screen (the layout of the DSi's) */
-    int hw = text_w(FONT_HS, "WARNING \xe2\x80\x93 HEALTH AND SAFETY") + 17;
-    warn_icon(bot, 128 - hw / 2.0f, 16, a);
-    text(bot, FONT_HS, 128 - hw / 2 + 17, 12, 0x000000, a, "WARNING \xe2\x80\x93 HEALTH AND SAFETY");
+    int hw = text_w(FONT_BD, "WARNING \xe2\x80\x93 HEALTH AND SAFETY") + 14;
+    warn_icon(bot, 128 - hw / 2.0f, 24, a);
+    text(bot, FONT_BD, 128 - hw / 2 + 14, 20, 0x000000, a, "WARNING \xe2\x80\x93 HEALTH AND SAFETY");
     static const char *body[] = { "BEFORE PLAYING, READ THE HEALTH", "AND SAFETY PRECAUTIONS BOOKLET", "FOR IMPORTANT INFORMATION", "ABOUT YOUR HEALTH AND SAFETY." };
-    for (int i = 0; i < 4; i++) squeezed(bot, FONT_MD, 128, 39 + i * 19, 214, 0x101010, a, body[i]);
-    squeezed(bot, FONT_SM, 128, 117, 236, 0x101010, a, "TO GET AN EXTRA COPY FOR YOUR REGION, GO ONLINE AT");
-    text_center(bot, FONT_MD, 128, 131, 0x2b9fd0, a, "www.nintendo.com/healthsafety/");
+    for (int i = 0; i < 4; i++) text_center(bot, FONT_SM, 128, 46 + i * 15, 0x101010, a, body[i]);
+    text_tight(bot, FONT_XS, 128, 113, 0x101010, a, "TO GET AN EXTRA COPY FOR YOUR REGION, GO ONLINE AT");
+    text_center(bot, FONT_SM, 128, 125, 0x2b9fd0, a, "www.nintendo.com/healthsafety/");
     /* the prompt fades in, then breathes */
     float pk = smoothstep(BOOT_PROMPT, BOOT_PROMPT + 0.35f, t);
     float pulse = t < BOOT_PROMPT + 0.35f ? 1 : 0.62f + 0.38f * cosf((float)(t - BOOT_PROMPT - 0.35f) * 3.1f);
-    if (t > BOOT_PROMPT) text_center(bot, FONT_MD, 128, 155, 0x505050, (int)(a * pk * pulse), "Touch the Touch Screen to continue.");
+    if (t > BOOT_PROMPT) text_center(bot, FONT_SM, 128, 156, 0x505050, (int)(a * pk * pulse), "Touch the Touch Screen to continue.");
     /* out of black: the whole screen together */
     int black = (int)(255 * (1 - smoothstep(0, BOOT_IN, t)));
     if (black) { rect_blend(top, 0, 0, 256, 192, 0x000000, black); rect_blend(bot, 0, 0, 256, 192, 0x000000, black); }

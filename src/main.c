@@ -79,6 +79,7 @@ int main(int argc, char **argv) {
     PlatInfo info;
     if (plat_init(backend, &info)) { plat_log("no display"); fprintf(stderr, "dsixl: no display\n"); return 3; }
     plat_log("display: %s, %dx scale", info.backend, info.scale);
+    plat_set_lcd(cfg.lcd);
     int headless = !strcmp(info.backend, "headless");
     if (script) parse_script(script);
     audio_init();

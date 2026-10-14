@@ -23,7 +23,7 @@ static void defaults(void) {
     memset(&cfg, 0, sizeof cfg);
     snprintf(cfg.user, sizeof cfg.user, "User");
     cfg.color = 0;
-    cfg.clock24 = 1; cfg.sfx = 1; cfg.music = 1; cfg.rumble = 1; cfg.boot_splash = 1; cfg.boot_wait = 0;
+    cfg.clock24 = 1; cfg.sfx = 1; cfg.music = 1; cfg.rumble = 1; cfg.lcd = 1; cfg.boot_splash = 1; cfg.boot_wait = 0;
     cfg.dim_after = 120; cfg.screen_off_after = 300;
     struct stat st;
     int dev = stat("/storage/roms", &st) == 0;
@@ -77,7 +77,7 @@ static void read_ini(const char *path, void (*kv)(const char *, const char *)) {
 #define STR(k, field) if (!strcmp(key, k)) { snprintf(cfg.field, sizeof cfg.field, "%s", v); return; }
 #define INT(k, field) if (!strcmp(key, k)) { cfg.field = atoi(v); return; }
 static void cfg_kv(const char *key, const char *v) {
-    STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music) INT("vibration", rumble)
+    STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music) INT("vibration", rumble) INT("dsi_screen", lcd)
     INT("boot_splash", boot_splash) INT("boot_wait", boot_wait) INT("swap_ab", swap_ab)
     INT("dim_after", dim_after) INT("screen_off_after", screen_off_after)
     if (!strcmp(key, "birthday")) { if (sscanf(v, "%d-%d", &cfg.bday_month, &cfg.bday_day) != 2) cfg.bday_month = cfg.bday_day = 0; return; }
@@ -128,6 +128,8 @@ void config_save(void) {
         "sound_effects = %d\n"
         "music = %d\n"
         "vibration = %d\n"
+        "# 1: the screens look like a DSi's (each pixel with a fine gap and colour stripes); 0: plain square pixels\n"
+        "dsi_screen = %d\n"
         "# the health and safety screen at start (1), and how it ends: 0 waits for a touch, n continues after n seconds\n"
         "boot_splash = %d\n"
         "boot_wait = %d\n"
@@ -144,7 +146,7 @@ void config_save(void) {
         "media = %s\n"
         "# your own sound pack: see the README (boot.wav, cursor.wav, select.wav, ..., music.mp3)\n"
         "sounds = %s\n",
-        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.rumble, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, cfg.dim_after, cfg.screen_off_after, bday,
+        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.rumble, cfg.lcd, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, cfg.dim_after, cfg.screen_off_after, bday,
         cfg.dir_nds, cfg.dir_gba, cfg.media, cfg.sounds);
     write_atomic(p, buf);
 }

@@ -11,7 +11,7 @@ V=$(cat VERSION 2>/dev/null || echo dev)
 SRCS="src/main.c src/ui.c src/widgets.c src/cart.c src/r3d.c src/library.c src/img.c src/font.c src/font_data.c
       src/gfx.c src/audio.c src/config.c src/rumble.c src/gamecfg.c src/power.c src/job.c src/panels.c src/synth.c
       src/plat/plat.c src/plat/plat_kms.c src/plat/plat_sdl.c src/plat/plat_headless.c src/plat/input_evdev.c
-      src/plat/audio_alsa.c src/plat/png.c"
+      src/plat/audio_alsa.c src/plat/png.c src/plat/lcd.c"
 WARN="-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-format-truncation -Wno-sign-compare"
 INC="-Isrc -Isrc/plat -I/usr/include/libdrm -I/usr/include/SDL2"
 mkdir -p build

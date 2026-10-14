@@ -42,7 +42,7 @@ typedef struct {
 
 static int fd = -1, pending;
 static Panel P[2];
-static uint32_t *rowbuf;
+static uint32_t *rowbuf, *gapbuf;
 
 /* pacing, counted for DSIXL_PROFILE (k_pace): a panel that got a new frame at two presents in a row must flip at two
  * refreshes in a row; every refresh in between showed the old frame again (a late frame: a stutter) */
@@ -296,6 +296,7 @@ static int k_init(PlatInfo *info) {
     drmModeFreeResources(res); drmModeFreePlaneResources(pres);
     if (ret) { plat_log("kms: modeset failed: %s", strerror(-ret)); for (int i = 0; i < 2; i++) { freebuf(&P[i].b[0]); freebuf(&P[i].b[1]); } drmDropMaster(fd); close(fd); fd = -1; return -1; }
     rowbuf = malloc((size_t)MAX(P[0].w, P[1].w) * 4);
+    gapbuf = malloc((size_t)MAX(P[0].w, P[1].w) * 4);
     info->top_w = P[0].lw; info->top_h = P[0].lh; info->bot_w = P[1].lw; info->bot_h = P[1].lh;
     info->scale = P[0].scale; info->panel_w = P[0].w; info->panel_h = P[0].h;
     info->hz = P[0].mode.vrefresh ? P[0].mode.vrefresh : 60; info->backend = "kms";
@@ -310,13 +311,17 @@ static void upscale(Panel *p, Buf *b, const Surf *s) {
     int k = p->scale, w = MIN(s->w, p->lw), h = MIN(s->h, p->lh);
     for (int y = 0; y < h; y++) {
         const uint32_t *src = s->px + (size_t)y * s->pitch;
+        uint8_t *dst = (uint8_t *)b->map + (size_t)(p->oy + y * k) * b->pitch + (size_t)p->ox * 4;
+        if (lcd_rows(src, w, k, rowbuf, gapbuf)) {      /* the DSi's look: k-1 rows of stripes, then the gap */
+            for (int j = 0; j < k; j++) memcpy(dst + (size_t)j * b->pitch, j < k - 1 ? rowbuf : gapbuf, (size_t)w * k * 4);
+            continue;
+        }
         uint32_t *r = rowbuf;
         if (k == 2) { for (int x = 0; x < w; x++) { uint32_t c = src[x]; r[0] = c; r[1] = c; r += 2; } }
         else if (k == 3) { for (int x = 0; x < w; x++) { uint32_t c = src[x]; r[0] = c; r[1] = c; r[2] = c; r += 3; } }
         else if (k == 4) { for (int x = 0; x < w; x++) { uint32_t c = src[x]; r[0] = c; r[1] = c; r[2] = c; r[3] = c; r += 4; } }
         else for (int x = 0; x < w; x++) for (int j = 0; j < k; j++) *r++ = src[x];
-        for (int j = 0; j < k; j++)
-            memcpy((uint8_t *)b->map + (size_t)(p->oy + y * k + j) * b->pitch + (size_t)p->ox * 4, rowbuf, (size_t)w * k * 4);
+        for (int j = 0; j < k; j++) memcpy(dst + (size_t)j * b->pitch, rowbuf, (size_t)w * k * 4);
     }
 }
 
@@ -362,6 +367,8 @@ static void k_present(Surf *top, Surf *bot) {
     tr_prev_exit = tr_exit; tr_enter = t0; tr_waited = t1;
     Surf *s[2] = { top, bot };
     int sent = 0, failed = 0;
+    static int lcd_was = -1;                           /* the look changed: both screens again */
+    if (plat_lcd != lcd_was) { lcd_was = plat_lcd; P[0].have_frame = P[1].have_frame = 0; }
     for (int i = 0; i < 2; i++) {
         Panel *p = &P[i];
         uint64_t h = surf_hash(s[i]);

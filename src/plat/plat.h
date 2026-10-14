@@ -47,6 +47,13 @@ void plat_shutdown(void);
 /* audio: mix() is called from the audio thread for `frames` stereo S16 frames */
 int plat_audio_start(int rate, void (*mix)(int16_t *buf, int frames));
 void plat_set_title(const char *s);
+/* the panels show the DS's pixels the way a DSi's LCD does (pixel gaps, colour stripes) where they are scaled 3x or
+ * more; on by default */
+void plat_set_lcd(int on);
+extern int plat_lcd;
+/* lcd.c: one row of w logical pixels scaled k times, as the k-1 rows of stripes (row) and the gap row below them
+ * (gap); 0 (nothing written) when the look is off or k is under 3 */
+int lcd_rows(const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap);
 const char *plat_data_dir(void);              /* where scores and settings live (created) */
 void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
