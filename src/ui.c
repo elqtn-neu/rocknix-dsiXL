@@ -2731,6 +2731,117 @@ static void launch_draw(Surf *top, Surf *bot, float t) {
     draw_slot_front(top, rise, cw * sc + 8, t >= L_SLAM ? ((int)((t - L_SLAM) * 8) % 2 ? 2 : 1) : 0);
 }
 
+/* ---- sleep and wake: the power button and the lid ----
+ * While the menu runs it has the power button and the lid to itself (plat_grab_sys), so it plays its sleep first and
+ * then puts the handheld to sleep ROCKNIX's way (device/sleep.sh). Closing the lid folds both screens away into the
+ * hinge, as if it were shutting on them; the power button turns them off like an old TV (in to a line, then a dot).
+ * Waking is ROCKNIX's: the menu sees the screens come back (or itself run again, after a real suspend) and plays it
+ * backwards: unfolding out of the hinge, or the dot, the line, the picture. */
+static int raw_new_input(const Input *i);
+enum { SL_NONE, SL_GOING, SL_ASLEEP, SL_WAKING };
+static int sl_state, sl_lid, sl_saw_off, sl_own, sl_lid_prev, sl_wake_sfx;
+static double sl_t;
+static Job sleepjob;
+#define SL_FOLD  0.40f      /* the lid: the screens fold into the hinge */
+#define SL_CRT   0.44f      /* the button: in to a line, the line to a dot, out */
+#define SL_GLOW  0.16f      /* (after the fold: the hinge's last light) */
+#define WK_FOLD  0.62f      /* the lid opened: a glow at the hinge, the screens unfold out of it */
+#define WK_CRT   0.52f      /* the button: a dot, a line, the picture */
+static float sl_going_len(void) { return sl_lid ? SL_FOLD + SL_GLOW : SL_CRT; }
+
+static uint32_t sl_buf[256 * 192];
+/* the screen's picture squeezed into rows [d0, d0 + dh) (black around it), mixed toward white by w, dimmed by dark */
+static void squeeze(Surf *s, float d0, float dh, float w, float dark) {
+    for (int y = 0; y < 192; y++) memcpy(sl_buf + y * 256, s->px + (size_t)y * s->pitch, 256 * 4);
+    int wi = (int)(clampf(w, 0, 1) * 256), mi = (int)((1 - clampf(dark, 0, 1)) * 256);
+    for (int y = 0; y < 192; y++) {
+        uint32_t *o = s->px + (size_t)y * s->pitch;
+        if (dh < 0.5f || y + 1 <= d0 || y >= d0 + dh) { memset(o, 0, 256 * 4); continue; }
+        int sy = CLAMP((int)((y + 0.5f - d0) * 192 / dh), 0, 191);
+        const uint32_t *r = sl_buf + sy * 256;
+        if (!wi && mi == 256) { memcpy(o, r, 256 * 4); continue; }
+        for (int x = 0; x < 256; x++) {
+            uint32_t c = r[x]; int R = c >> 16 & 255, G = c >> 8 & 255, B = c & 255;
+            R += (255 - R) * wi >> 8; G += (255 - G) * wi >> 8; B += (255 - B) * wi >> 8;
+            o[x] = (c & 0xff000000u) | (uint32_t)(R * mi >> 8) << 16 | (uint32_t)(G * mi >> 8) << 8 | (uint32_t)(B * mi >> 8);
+        }
+    }
+}
+/* the old TV's line across the middle (half_w each side), or its last dot */
+static void tv_line(Surf *s, float half_w, int a) {
+    fill(s, 0x000000);
+    if (half_w >= 1.5f) { rect_blend(s, (int)(128 - half_w), 95, (int)(half_w * 2), 2, 0xffffff, a); rect_blend(s, (int)(128 - half_w * 0.8f), 94, (int)(half_w * 1.6f), 4, 0xffffff, a / 5); }
+    else disc(s, 128, 96, 1.2f + half_w, 0xffffff, a);
+}
+/* the hinge's light: along the top screen's bottom edge and the bottom screen's top edge */
+static void hinge_glow(Surf *top, Surf *bot, int a) {
+    rect_blend(top, 0, 190, 256, 2, 0xffffff, a); rect_blend(top, 0, 186, 256, 4, 0xffffff, a / 6);
+    rect_blend(bot, 0, 0, 256, 2, 0xffffff, a); rect_blend(bot, 0, 2, 256, 4, 0xffffff, a / 6);
+}
+static void sleep_draw(Surf *top, Surf *bot) {
+    float t = (float)(T - sl_t);
+    if (sl_state == SL_GOING && sl_lid) {
+        float e = ease_in_cubic(t / SL_FOLD), h = 192 * (1 - e);
+        squeeze(top, 192 - h, h, 0, 0.55f * e); squeeze(bot, 0, h, 0, 0.55f * e);
+        float g = t < SL_FOLD ? e : 1 - (t - SL_FOLD) / SL_GLOW;
+        if (g > 0) hinge_glow(top, bot, (int)(220 * g));
+    } else if (sl_state == SL_GOING) {
+        if (t < 0.24f) {
+            float e = ease_in_cubic(t / 0.24f), h = MAX(2.0f, 192 * (1 - e));
+            squeeze(top, 96 - h / 2, h, e * 0.85f, 0); squeeze(bot, 96 - h / 2, h, e * 0.85f, 0);
+        } else if (t < 0.36f) {
+            float w = 128 * (1 - ease_in_cubic((t - 0.24f) / 0.12f));
+            tv_line(top, w, 255); tv_line(bot, w, 255);
+        } else {
+            float k = clampf((t - 0.36f) / (SL_CRT - 0.36f), 0, 1);
+            tv_line(top, 0, (int)(255 * (1 - k))); tv_line(bot, 0, (int)(255 * (1 - k)));
+        }
+    } else if (sl_state == SL_WAKING && sl_lid) {
+        if (t < 0.12f) { fill(top, 0); fill(bot, 0); hinge_glow(top, bot, (int)(220 * ease_out_cubic(t / 0.12f))); return; }
+        float k = (t - 0.12f) / (WK_FOLD - 0.12f), e = ease_out_back(k), h = MIN(192.0f, 192 * e);
+        squeeze(top, 192 - h, h, 0, 0.55f * (1 - ease_out_cubic(k))); squeeze(bot, 0, h, 0, 0.55f * (1 - ease_out_cubic(k)));
+        hinge_glow(top, bot, (int)(220 * (1 - ease_out_cubic(k))));
+    } else if (sl_state == SL_WAKING) {
+        if (t < 0.07f) { tv_line(top, 0, (int)(255 * t / 0.07f)); tv_line(bot, 0, (int)(255 * t / 0.07f)); return; }
+        if (t < 0.18f) { float w = 128 * ease_out_cubic((t - 0.07f) / 0.11f); tv_line(top, w, 255); tv_line(bot, w, 255); return; }
+        float k = (t - 0.18f) / (WK_CRT - 0.18f), h = MAX(2.0f, 192 * ease_out_back(k));
+        squeeze(top, 96 - h / 2, h, 0.85f * (1 - ease_out_cubic(k)), 0); squeeze(bot, 96 - h / 2, h, 0.85f * (1 - ease_out_cubic(k)), 0);
+    }
+}
+static void sleep_start(int lid) {
+    sl_state = SL_GOING; sl_lid = lid; sl_t = T;
+    sfx(SFX_SLEEP); rumble(12, 0.3f);
+    music_fade(0, 0.3f);
+}
+static void sleep_wake(void) {
+    sl_state = SL_WAKING; sl_t = T; sl_wake_sfx = 0;
+    plat_grab_sys(1);
+    last_input = T; pw_mode = PW_FULL; swallow = 1;
+    if (cfg.music) music_fade(0.55f, 0.8f);
+}
+/* the animation played: to sleep (ROCKNIX's), or, without ROCKNIX's, the menu's own (the screens off) */
+static void sleep_now(void) {
+    sl_state = SL_ASLEEP; sl_t = T; sl_saw_off = 0; sl_own = 0;
+    char sp[400]; script_path(sp, sizeof sp, "sleep.sh");
+    if (have_script("sleep.sh")) {
+        char q[420], cmd[480]; shq(q, sizeof q, sp);
+        snprintf(cmd, sizeof cmd, "exec %s %s", q, sl_lid ? "lid" : "power");
+        plat_grab_sys(0);                                   /* (its waking presses must reach ROCKNIX) */
+        if (job_start(&sleepjob, "sleep", cmd)) { sl_own = 1; power_screens(0); }
+    } else { sl_own = 1; power_screens(0); }
+}
+/* asleep: wait for the screens to come back (ROCKNIX's waking), or for the button or the lid (the menu's own) */
+static void sleep_idle(const Input *i, int lid_opened) {
+    if (!sl_own) {
+        int lit = power_lit();
+        if (lit == 0) sl_saw_off = 1;
+        else if (lit == 1 && sl_saw_off) { sleep_wake(); return; }
+        else if (!sl_saw_off && T - sl_t > 2.5) { sl_own = 1; power_screens(0); plat_grab_sys(1); }   /* ROCKNIX didn't */
+    }
+    if (sl_own && (i->power || lid_opened || (!sl_lid && !i->lid && raw_new_input(i)))) { power_screens(1); sleep_wake(); }
+}
+int ui_asleep(void) { return sl_state == SL_ASLEEP; }
+
 static int raw_new_input(const Input *i) {
     int t = i->touch[0] || i->touch[1];
     int n = (i->held & ~raw_held) != 0 || (t && !raw_touch);
@@ -2745,9 +2856,10 @@ static void wake(int from_black) {
 int ui_power(void) { return pw_mode; }
 void ui_idle_input(const Input *i) { if (raw_new_input(i)) wake(1); }
 void ui_resumed(void) {
-    /* the lid opened: out of black, the open sound */
-    pw_mode = PW_DIM; wake(1); swallow = 0;
-    sfx(SFX_WAKE);
+    /* back from a sleep (a real suspend stops the menu): the wake that goes with how it went to sleep; asleep some
+     * other way (ROCKNIX's, the lid on a device the menu doesn't hold), the lid's */
+    if (sl_state != SL_ASLEEP) sl_lid = 1;
+    pw_mode = PW_FULL; sleep_wake(); swallow = 0;
 }
 static void pw_step(void) {
     double idle = T - last_input;
@@ -2770,6 +2882,20 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     }
     T += dt; st_t += dt;
     if (in.quit) { job_stop(&artjob); return EXIT_QUIT; }
+    /* sleep: the power button, the lid closing (in the menu itself: not in the start-up or a launch) */
+    int lid_opened = !input->lid && sl_lid_prev, lid_shut = input->lid && !sl_lid_prev;
+    sl_lid_prev = input->lid;
+    if (sl_state == SL_NONE && state == ST_MENU && !rg && (input->power || lid_shut)) sleep_start(lid_shut);
+    if (sl_state == SL_GOING && T - sl_t >= sl_going_len()) sleep_now();
+    if (sl_state == SL_ASLEEP) {
+        sleep_idle(input, lid_opened);
+        if (sl_state == SL_ASLEEP) { fill(top, 0x000000); fill(bot, 0x000000); return -1; }
+    }
+    if (sl_state == SL_WAKING) {
+        if (!sl_wake_sfx && T - sl_t > 0.1) { sl_wake_sfx = 1; sfx(SFX_WAKE); }   /* (ROCKNIX unmutes just after the screens) */
+        if (T - sl_t >= (sl_lid ? WK_FOLD : WK_CRT)) sl_state = SL_NONE;
+    }
+    if (sl_state != SL_NONE) { in.held = 0; in.touch[0] = in.touch[1] = 0; }
     float fdt = (float)MIN(dt, 0.05);
     rumble_tick();
     parts_step(fdt);
@@ -2959,6 +3085,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         int a = (int)(255 * (1 - ease_out_cubic((float)((T - wake_t) / 0.35))));
         rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
     }
+    if (sl_state == SL_GOING || sl_state == SL_WAKING) sleep_draw(top, bot);
     pw_step();
     if (exit_code >= 0 && exit_code != EXIT_LAUNCH) { state_save(); job_stop(&artjob); return exit_code; }
     return -1;

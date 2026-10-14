@@ -23,7 +23,9 @@
 static volatile sig_atomic_t term;
 static void on_term(int s) { (void)s; term = 1; }
 
-/* the scripted input of a headless run: "1.0:A,2.5:RIGHT,3:TOUCH@128x100" (each held 0.1 s) */
+/* the scripted input of a headless run: "1.0:A,2.5:RIGHT,3:TOUCH@128x100" (each held 0.1 s); POWER (the power
+ * button, pressed), LIDCLOSE and LIDOPEN */
+enum { S_POWER = 100, S_LIDCLOSE, S_LIDOPEN };
 typedef struct { double t, hold; int bit; int touch, tx, ty; } Ev;
 static Ev evs[256]; static int nev;
 static void parse_script(const char *s) {
@@ -34,6 +36,9 @@ static void parse_script(const char *s) {
         *c = 0; Ev e = { atof(tok), 0, -1, 0, 0, 0 };
         char *h = strchr(c + 1, '~'); if (h) { e.hold = atof(h + 1); *h = 0; }   /* "RIGHT~1.5": held 1.5 s */
         if (!strncasecmp(c + 1, "TOUCH@", 6)) { e.touch = 1; sscanf(c + 7, "%dx%d", &e.tx, &e.ty); }
+        else if (!strcasecmp(c + 1, "POWER")) e.bit = S_POWER;
+        else if (!strcasecmp(c + 1, "LIDCLOSE")) e.bit = S_LIDCLOSE;
+        else if (!strcasecmp(c + 1, "LIDOPEN")) e.bit = S_LIDOPEN;
         else for (int b = 0; b < B_COUNT; b++) if (!strcasecmp(c + 1, names[b])) e.bit = b;
         evs[nev++] = e;
     }
@@ -41,6 +46,8 @@ static void parse_script(const char *s) {
 static void script_input(double t, Input *in) {
     memset(in, 0, sizeof *in);
     for (int i = 0; i < nev; i++) {
+        if (evs[i].bit == S_LIDCLOSE || evs[i].bit == S_LIDOPEN) { if (t >= evs[i].t) in->lid = evs[i].bit == S_LIDCLOSE; continue; }
+        if (evs[i].bit == S_POWER) { if (t >= evs[i].t && t < evs[i].t + 1.0 / 60) in->power = 1; continue; }
         double held = evs[i].hold > 0 ? evs[i].hold : evs[i].touch ? 0.12 : 0.1;
         if (t >= evs[i].t && t < evs[i].t + held) {
             if (evs[i].touch) { in->touch[1] = 1; in->tx[1] = evs[i].tx; in->ty[1] = evs[i].ty; }
@@ -121,6 +128,7 @@ int main(int argc, char **argv) {
         if (headless && record) { char p[600]; snprintf(p, sizeof p, "%s/%05d.png", record, frame); headless_snapshot(p); }
         plat_present(&top, &bot);
         if (!headless && ui_power() >= PW_CALM) usleep(15000);     /* calm: every other refresh is plenty */
+        if (!headless && ui_asleep()) usleep(40000);               /* asleep: only waiting to wake */
         frame++;
     }
     if (!headless) power_restore();

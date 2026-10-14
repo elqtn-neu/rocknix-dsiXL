@@ -22,19 +22,21 @@
 #include <linux/input.h>
 
 #define MAXDEV 12
-enum { D_PAD, D_TOUCH, D_KBD };
+enum { D_PAD, D_TOUCH, D_KBD, D_SYS };   /* D_SYS: the power button, the lid (nothing else on it) */
 typedef struct {
     int fd, kind, screen;               /* touch: 0 top, 1 bottom */
     char path[64];
     int axmin[ABS_CNT > 64 ? 64 : ABS_CNT], axmax[64], axflat[64];
     int tx, ty, down, slot0;
     uint32_t keys;
+    int has_lid, has_power, grabbed;
 } Dev;
 static Dev dev[MAXDEV]; static int ndev;
 static int pw_[2], ph_[2], sc_[2], ox_[2], oy_[2];
 static uint32_t held;
 static float ax[4];                     /* lx ly rx ry */
 static int hat_x, hat_y, have_sticks;
+static int power_presses, lid_closed, grab_sys = 1;
 static double rescan_t;
 static double now_s(void) { return plat_now(); }
 
@@ -49,6 +51,8 @@ static void open_dev(const char *path) {
     ioctl(fd, EVIOCGBIT(0, sizeof ev), ev);
     if (test_bit(ev, EV_KEY)) ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys);
     if (test_bit(ev, EV_ABS)) ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abs_), abs_);
+    unsigned long sw[(SW_MAX + 1) / (8 * sizeof(long)) + 1] = { 0 };
+    if (test_bit(ev, EV_SW)) ioctl(fd, EVIOCGBIT(EV_SW, sizeof sw), sw);
     char name[128] = { 0 }; ioctl(fd, EVIOCGNAME(sizeof name - 1), name);
     Dev *d = &dev[ndev];
     memset(d, 0, sizeof *d);
@@ -79,7 +83,17 @@ static void open_dev(const char *path) {
     } else if ((test_bit(keys, KEY_A) && test_bit(keys, KEY_SPACE)) || test_bit(keys, KEY_VOLUMEUP)) {   /* (the volume keys: their own device) */
         d->kind = D_KBD;
         plat_log("input: keyboard %s (%s)", path, name);
+    } else if (test_bit(keys, KEY_POWER) || test_bit(sw, SW_LID)) {
+        /* the power button, the lid: the menu's own (grabbed) while it runs, so it can play its sleep first */
+        d->kind = D_SYS;
+        if (grab_sys) d->grabbed = !ioctl(fd, EVIOCGRAB, 1);
+        plat_log("input: system %s (%s)%s", path, name, d->grabbed ? ", the menu's" : "");
     } else { close(fd); return; }
+    d->has_power = test_bit(keys, KEY_POWER); d->has_lid = test_bit(sw, SW_LID);
+    if (d->has_lid) {
+        unsigned long st[(SW_MAX + 1) / (8 * sizeof(long)) + 1] = { 0 };
+        if (ioctl(fd, EVIOCGSW(sizeof st), st) >= 0) lid_closed = test_bit(st, SW_LID);
+    }
     ndev++;
 }
 
@@ -221,7 +235,11 @@ void evdev_poll(Input *in) {
                         touch_state.tx[s] = (px - ox_[s]) / sc_[s];
                         touch_state.ty[s] = (py - oy_[s]) / sc_[s];
                     }
-                } else if (e->type == EV_KEY) {
+                } else if (e->type == EV_SW && e->code == SW_LID) {
+                    lid_closed = e->value != 0;
+                } else if (e->type == EV_KEY && e->code == KEY_POWER) {
+                    if (e->value == 1) power_presses++;
+                } else if (e->type == EV_KEY && d->kind != D_SYS) {
                     int b = d->kind == D_PAD ? pad_bit(e->code) : kbd_bit(e->code);
                     if (b < 0) continue;
                     if (e->value) { held |= BIT(b); d->keys |= BIT(b); }
@@ -245,6 +263,17 @@ void evdev_poll(Input *in) {
     if (hat_x < 0) in->held |= BIT(B_LEFT); else if (hat_x > 0) in->held |= BIT(B_RIGHT);
     if (hat_y < 0) in->held |= BIT(B_UP); else if (hat_y > 0) in->held |= BIT(B_DOWN);
     in->has_sticks = have_sticks;
+    in->power = power_presses; power_presses = 0;
+    in->lid = lid_closed;
     in->lx = ax[0]; in->ly = ax[1]; in->rx = ax[2]; in->ry = ax[3];
     for (int s = 0; s < 2; s++) { in->touch[s] = touch_state.touch[s]; in->tx[s] = touch_state.tx[s]; in->ty[s] = touch_state.ty[s]; }
+}
+
+void evdev_grab_sys(int on) {
+    grab_sys = on;
+    for (int i = 0; i < ndev; i++) {
+        Dev *d = &dev[i];
+        if (d->kind != D_SYS || d->grabbed == on) continue;
+        if (!ioctl(d->fd, EVIOCGRAB, on ? 1 : 0)) d->grabbed = on;
+    }
 }

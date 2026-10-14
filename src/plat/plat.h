@@ -23,6 +23,8 @@ typedef struct {
     float mx, my;
     int quit;                           /* window closed, SIGTERM */
     int last_kbd;                       /* desktop: a key was the last input (button glyphs) */
+    int power;                          /* the power button went down since the last poll */
+    int lid;                            /* the lid: 1 closed, 0 open (or no lid switch) */
 } Input;
 
 typedef struct {
@@ -50,6 +52,10 @@ void plat_set_title(const char *s);
 /* the panels show the DS's pixels the way a DSi's LCD does (pixel gaps, colour stripes) where they are scaled 3x or
  * more; on by default */
 void plat_set_lcd(int on);
+/* the power button and the lid to the menu alone (1: ROCKNIX's input_sense doesn't see them, so it doesn't put the
+ * handheld to sleep before the menu's animation), or back to everyone (0) */
+void plat_grab_sys(int on);
+void evdev_grab_sys(int on);
 extern int plat_lcd;
 /* lcd.c: one row of w logical pixels scaled k times, as the k-1 rows of stripes (row) and the gap row below them
  * (gap); 0 (nothing written) when the look is off or k is under 3 */

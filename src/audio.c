@@ -37,7 +37,7 @@ static struct {
 } mu_;
 
 static const char *const NAMES[SFX_COUNT] = { "boot", "cursor", "select", "launch", "slam", "back", "bump", "tab", "whoosh", "open", "continue", "scroll", "error", "notch",
-                                               "key", "toggle", "close", "star", "done", "page", "wake", "bright", "iris_in", "iris_out" };
+                                               "key", "toggle", "close", "star", "done", "page", "wake", "bright", "iris_in", "iris_out", "sleep" };
 
 /* ---- files ---- */
 

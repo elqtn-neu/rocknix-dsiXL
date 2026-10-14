@@ -60,7 +60,7 @@ cp $BIN $D/dsixl.new && chmod 755 $D/dsixl.new && mv -f $D/dsixl.new $D/dsixl
 rm -rf $D/assets.new && cp -r $SRC/assets $D/assets.new && rm -rf $D/assets && mv $D/assets.new $D/assets
 # (each into a new file, then renamed over the old: a script that's running, as session.sh is during an update
 # from the menu, keeps reading its own copy)
-for f in session.sh restore.sh start_es.sh launch.sh brightness.sh backup.sh net.sh update.sh; do
+for f in session.sh restore.sh start_es.sh launch.sh brightness.sh backup.sh net.sh update.sh sleep.sh; do
     cp $SRC/device/$f $D/$f.new && chmod 755 $D/$f.new && mv -f $D/$f.new $D/$f
 done
 # the in-game DSi LCD look (Emulator settings > Screen > DSi LCD): libdsflip reads DraStic's shader folder

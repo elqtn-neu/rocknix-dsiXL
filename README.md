@@ -46,6 +46,11 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   light goes out; black until the game draws: no flash, no terminal, no desktop in between.
 - **Back from a game.** A dot of light at the slot, the iris opens out of it across both screens, the cartridge
   pops out of the slot, drops through to the bottom screen and lands back in its place.
+- **Sleep and wake.** In the menu, closing the lid folds both screens away into the hinge (a last line of light
+  along it); the power button turns them off like an old TV, in to a line and then a dot. Then the handheld sleeps
+  ROCKNIX's way (`device/sleep.sh`: its suspend, or its screens-off "fake" suspend with the timed shutdown). Waking
+  plays it backwards: the screens unfold out of the hinge, or a dot, a line, the picture. (The menu holds the power
+  button and the lid while it runs so it can play its part first; in games ROCKNIX has them as always.)
 - **Brightness, the DSi's five steps.** Tap the sun in the bottom left corner. Both screens together; a DSi bar shows
   on the top screen. ROCKNIX's own Anbernic button + volume keeps working as it always does (installing with
   `--dsi-brightness` makes it step through the DSi's five levels instead).

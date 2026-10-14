@@ -39,6 +39,7 @@ VGMTrans or Tinke, then export WAV files.
 | `wake.wav` | the lid opened, the screens back on | the open-lid sound |
 | `bright.wav` | a brightness step | the brightness change click |
 | `iris_in.wav` | the screens closing onto the slot, into a game (about half a second) | a falling run, a tick at the end |
+| `sleep.wav` | the power button or the lid: the screens going out (`wake.wav` when they come back) | a soft chord settling down, a tick |
 | `iris_out.wav` | the screens opening out of the slot, back from a game | a rising run, blooming |
 | `music.mp3` (or `music.wav`) | the menu's music, looped | the DSi Menu theme |
 

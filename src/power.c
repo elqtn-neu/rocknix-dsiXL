@@ -47,6 +47,13 @@ void power_screens(int on) {
 
 void power_restore(void) { power_screens(1); power_dim(0); }
 
+int power_lit(void) {
+    find_backlights();
+    if (bl_n <= 0) return -1;
+    int v = rd(bl_dir[0], "bl_power");
+    return v < 0 ? -1 : v == 0;
+}
+
 /* the battery, as the kernel's fuel gauge has it (rk817: µA, µV, µAh) */
 static int ps_read(const char *name, long *v) {
     glob_t g; int ok = 0;

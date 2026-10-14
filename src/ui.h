@@ -18,4 +18,5 @@ int ui_frame(const Input *in, double dt, Surf *top, Surf *bot);
 enum { PW_FULL, PW_CALM, PW_DIM, PW_OFF };
 int ui_power(void);
 void ui_idle_input(const Input *in);    /* with the screens off: a button or a touch wakes them (and does nothing else) */
+int ui_asleep(void);                    /* the handheld is asleep (the menu waits, drawing nothing) */
 void ui_resumed(void);                  /* the handheld was asleep (the lid): the menu wakes up */

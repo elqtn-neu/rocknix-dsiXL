@@ -74,3 +74,4 @@ double plat_frame_clock(void) { return be && be->frame_clock ? be->frame_clock()
 void plat_shutdown(void) { if (be && be->shutdown) be->shutdown(); }
 int plat_audio_start(int rate, void (*mix)(int16_t *, int)) { return be && be->audio ? be->audio(rate, mix) : -1; }
 void plat_set_title(const char *s) { (void)s; }
+void plat_grab_sys(int on) { if (be == &backend_kms) evdev_grab_sys(on); }
