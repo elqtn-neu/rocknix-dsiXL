@@ -42,8 +42,9 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   black and stay black until the game draws: no flash, no terminal, no desktop in between.
 - **Back from a game.** Out of black, the cartridge pops out of the slot, drops through to the bottom screen and
   lands back in its place.
-- **Brightness, the DSi's five steps.** Hold the Anbernic button and press volume up/down (in the menu and in
-  games), or tap the sun in the bottom left corner. Both screens together; a DSi bar shows on the top screen.
+- **Brightness, the DSi's five steps.** Tap the sun in the bottom left corner. Both screens together; a DSi bar shows
+  on the top screen. ROCKNIX's own Anbernic button + volume keeps working as it always does (installing with
+  `--dsi-brightness` makes it step through the DSi's five levels instead).
 - **Saving the battery.** After 30 seconds untouched the menu draws at 30 frames a second; after 2 minutes the
   screens dim, after 5 they go off (`dim_after`, `screen_off_after` in `config.ini`). The first touch or button
   only wakes them. Closing the lid sleeps (ROCKNIX's own suspend); opening it, the menu comes back out of black.
@@ -89,7 +90,7 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 | Up / Down | the previous / next letter (in name order; else five games back / on) |
 | L / R | the tabs: NDS, ★ Favorites (the middle one, where the menu opens), GBA |
 | SELECT (or the gear, bottom right) | the emulator settings (for all DS games, all GBA games) |
-| Anbernic button + volume up/down (or the sun, bottom left) | brightness, five steps |
+| The sun, bottom left (or ROCKNIX's Anbernic button + volume) | brightness |
 | A (or tap the selected cartridge) | start it (on release: the cartridge sinks in while held) |
 | X | the top screen: the logo, or the photo view |
 | Y | a favourite, or not (a gold star on the cartridge) |

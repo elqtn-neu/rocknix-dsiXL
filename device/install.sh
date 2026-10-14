@@ -7,6 +7,7 @@
 #   sh device/install.sh --disable   back to EmulationStation at boot (the menu stays installed, in Ports)
 #   sh device/install.sh --uninstall removes it (your art and sounds in /storage/roms/dsixl stay)
 #   add --with-rocknixds to install ROCKNIXDS too when it's missing (DraStic on both panels; needs Wi-Fi)
+#   add --dsi-brightness to make the Anbernic button + volume step through the DSi's five levels (else ROCKNIX's own)
 set -e
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 D=/storage/.config/dsixl
@@ -65,7 +66,7 @@ cp $SRC/tools/dsixl-scrape.py $D/dsixl-scrape.py.new && mv -f $D/dsixl-scrape.py
 cp $SRC/VERSION $D/VERSION 2>/dev/null || true
 # the recommended emulator settings, only where ROCKNIX has none of its own yet (yours are never touched)
 DSIXL_HOME=$D $D/dsixl --setup-emulators || true
-hotkeys on
+case " $* " in *" --dsi-brightness "*) hotkeys on ;; esac      # (ROCKNIX's own brightness steps unless asked)
 cp $SRC/docs/sounds.md /storage/roms/dsixl/sounds/README.md 2>/dev/null || true
 mkdir -p /storage/.config/autostart
 cp $SRC/device/autostart-dsixl /storage/.config/autostart/zz-dsixl && chmod 755 /storage/.config/autostart/zz-dsixl
