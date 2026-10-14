@@ -92,33 +92,50 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 No emulator is bundled: the menu starts the ones on the handheld (ROCKNIXDS's DraStic for DS, ROCKNIX's RetroArch
 for GBA).
 
-## Install (on the handheld, over ssh)
+## Install (RG DS Plus, two microSD cards)
 
-```sh
-# copy this repository (or its release) to the handheld, e.g. /storage/dsixl-src, then:
-sh /storage/dsixl-src/device/install.sh            # installs; try it from EmulationStation: Ports > DSi Menu
-sh /storage/dsixl-src/device/install.sh --enable   # ...and make it what the handheld boots into
-sh /storage/dsixl-src/device/install.sh --disable  # EmulationStation at boot again
-```
+Card 1 (8 GB is plenty) holds the OS, card 2 the games. The menu changes nothing in ROCKNIX's system files: it puts
+its own launcher in front of EmulationStation, and steps aside when asked or when it fails.
 
-How it fits in:
-- At boot, ROCKNIX starts sway and EmulationStation's service. With the menu enabled, that service runs this
-  menu's launcher instead (`device/start_es.sh`, bind-mounted over `/usr/bin/start_es.sh` by
-  `/storage/.config/autostart/zz-dsixl`).
-- That launcher hands the panels to the menu's own systemd unit (`device/session.sh`). The menu then draws on both
-  panels directly, as ROCKNIXDS's DraStic does.
-- **Exit to EmulationStation** in the options brings back exactly what you had, until the next boot.
-- If the menu fails to start twice in a row, the session falls back to EmulationStation and shows why.
+**1. The OS card: flash ROCKNIXDS's image** (ROCKNIX with ROCKNIXDS's DraStic, set up for the RG DS Plus).
+- Download `rocknixds-...-plus-rocknix-....img.gz` from [ROCKNIXDS's releases](https://github.com/JorreFog/ROCKNIXDS/releases?q=plus)
+  (about 1.6 GB, about 2 GB unpacked: it fits the 8 GB card; ROCKNIX grows its storage partition to the whole card on
+  the first boot). Don't unzip it.
+- Write it to the **8 GB card** with [balenaEtcher](https://etcher.balena.io/) (*Flash from file*, pick the card,
+  *Flash!*). Double-check the target: everything on that card is erased.
 
-Games:
-- **NDS** runs ROCKNIXDS's DraStic with libdsflip, straight to both panels (`device/launch.sh`), with your
-  EmulationStation DS settings: power profile, 3D renderer, 3D resolution and texture filter. Resume-on-quit
-  works too: the exit hotkey saves, and the next start carries on.
-- **GBA** runs RetroArch (mGBA; set `gba_core` in `config.ini` to change it) through ROCKNIX's `runemu.sh` on
-  the top screen.
-- The menu quits while a game runs, so the game gets all of the 1 GB.
+**2. The games card** (16 GB, exFAT or FAT32, as it comes or formatted on your computer):
+- Make a folder `roms` with `nds` and `gba` inside, and put your games there (`roms/nds/*.nds`, `roms/gba/*.gba`).
+- Unpack `dist/dsixl-<version>.zip` (from this repository) onto the **root of this card**: it adds
+  `roms/ports/Install DSi Menu.sh`, `roms/ports/Uninstall DSi Menu.sh` and a hidden `roms/ports/.dsixl-install`.
 
-ROMs: `/storage/roms/nds` and `/storage/roms/gba` (set in `/storage/.config/dsixl/config.ini`).
+**3. First boot.** OS card in the slot the handheld boots from (the one marked as the system/TF1 slot), games card
+in the other. Switch on: ROCKNIX sets up the card and restarts once by itself, ROCKNIXDS installs itself (about a
+minute), and EmulationStation comes up. ROCKNIX finds the second card by itself and uses its `roms` folder for the
+games (it's mounted at `/storage/games-external`, its `roms` shown at `/storage/roms`). Your games and *Ports* appear.
+
+**4. Install the menu:** in EmulationStation, *Ports > Install DSi Menu*. It copies the menu to
+`/storage/.config/dsixl` (on the OS card), checks the emulators, sets the recommended emulator settings where you
+haven't set any (yours are never changed), makes the menu the start screen, and opens it. The log is
+`/storage/dsixl-install.log`.
+
+**5. Art (optional, Wi-Fi):** connect to Wi-Fi in EmulationStation first, then over ssh, or later from a computer
+with the games card: `python3 /storage/.config/dsixl/dsixl-scrape.py`. It goes onto the games card
+(`roms/dsixl/media`).
+
+**Safe ways back:**
+- *Options > Exit to EmulationStation*: EmulationStation until the next boot.
+- If the menu fails to start twice in a row, EmulationStation comes up instead, with a message.
+- *Ports > Uninstall DSi Menu* removes it; EmulationStation is the start screen again.
+- From a computer: delete `/storage/.config/dsixl/enabled` (the OS card's storage partition) and EmulationStation is the
+  start screen again; nothing else needs undoing.
+
+Over ssh instead (root, password `rocknix`): copy the repository to the handheld and run
+`sh device/install.sh --enable` (add `--with-rocknixds` on a plain ROCKNIX install to get ROCKNIXDS's DraStic as
+well; needs Wi-Fi). `--disable` / `--uninstall` undo it.
+
+**The emulators** come with the image, not with the menu: ROCKNIXDS's DraStic (DS, straight to both panels) and
+ROCKNIX's RetroArch with mGBA (GBA). The installer checks they're there and says so if one isn't.
 
 ## Art
 

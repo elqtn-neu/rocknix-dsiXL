@@ -1,7 +1,7 @@
-// gamecfg.h: a game's emulator settings, kept where ROCKNIX keeps them: ROCKNIX's system.cfg, as per-game keys
-// (nds["<rom file>"].shader=ds-crisp). EmulationStation writes the same keys, ROCKNIXDS's DraStic session and
-// ROCKNIX's RetroArch launcher read them: a setting made here is the one the game starts with, and the one
-// EmulationStation shows.
+// gamecfg.h: the emulators' settings, for every game of a system, kept where ROCKNIX keeps them: ROCKNIX's
+// system.cfg, as the system's keys (nds.shader=ds-crisp, gba.integerscale=1). EmulationStation writes the same keys
+// (its system settings), ROCKNIXDS's DraStic session and ROCKNIX's RetroArch launcher read them. A game with a
+// setting of its own (set in EmulationStation) keeps that one.
 #pragma once
 #include "library.h"
 
@@ -17,6 +17,8 @@ typedef struct {
 } GameOpt;
 
 int gamecfg_opts(int sys, const GameOpt **opts);          /* the options of a system */
-/* the choice each option has for a game: its own key, else the system's, else the recommended one */
-void gamecfg_load(const Game *g, int *choice);
-int gamecfg_save(const Game *g, const int *choice);       /* writes the game's keys; 0 on success */
+/* the choice each option has: the system's key, else the recommended one */
+void gamecfg_load(int sys, int *choice);
+int gamecfg_save(int sys, const int *choice);             /* writes the system's keys; 0 on success */
+/* the recommended choices, written only where the system has none yet (the installer's first setup) */
+int gamecfg_defaults(int sys);

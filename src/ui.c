@@ -87,10 +87,13 @@ static int sb_press; static double sb_press_t;
 
 /* options */
 static int opt_open; static double opt_t; static int opt_sel; static float opt_anim;
-/* a game's settings (SELECT, or the gear): its emulator's options, then Recommended and Play */
-static int gs_open; static float gs_anim; static Game *gs_game; static int gs_sel, gs_n;
-static int gs_choice[GOPT_MAX]; static double gs_val_t = -10; static int gs_val_dir; static double gs_open_t = -10;
+/* the emulators' settings (SELECT, the gear, Options): a page for the DS, a page for the GBA (L/R), each its options,
+ * then Recommended and Done. They're for every game of the system. */
+static int gs_open; static float gs_anim; static int gs_sys, gs_sel, gs_n;
+static int gs_choice[SYS_COUNT][GOPT_MAX]; static double gs_val_t = -10; static int gs_val_dir; static double gs_open_t = -10;
+static double gs_page_t = -10; static int gs_page_dir;
 static void start_launch(void);
+static void gs_open_here(void);
 
 /* launch */
 static Game *lg; static int l_sys, l_view; static int launched_file_written;
@@ -693,10 +696,11 @@ static void draw_bottom(Surf *s, float intro) {
 
 /* ---- the options window ---- */
 
-enum { OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER, OPT_COUNT };
+enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER, OPT_COUNT };
 
 static void opt_label(int i, char *b, int n) {
     switch (i) {
+    case OPT_EMU: snprintf(b, (size_t)n, "Emulator settings"); break;
     case OPT_COLOR: snprintf(b, (size_t)n, "Color: %s", fav_color_name(cfg.color)); break;
     case OPT_CLOCK: snprintf(b, (size_t)n, "Clock: %s", cfg.clock24 ? "24-hour" : "12-hour"); break;
     case OPT_SFX: snprintf(b, (size_t)n, "Sound effects: %s", cfg.sfx ? "On" : "Off"); break;
@@ -710,6 +714,7 @@ static void opt_label(int i, char *b, int n) {
 
 static void opt_act(int i, int dir) {
     switch (i) {
+    case OPT_EMU: opt_open = 0; opt_t = T; gs_open_here(); break;
     case OPT_COLOR: cfg.color = (cfg.color + (dir ? dir : 1) + 16) % 16; sfx(SFX_CURSOR); config_save(); break;
     case OPT_CLOCK: cfg.clock24 = !cfg.clock24; sfx(SFX_SELECT); config_save(); break;
     case OPT_SFX: cfg.sfx = !cfg.sfx; sfx(SFX_SELECT); config_save(); break;
@@ -733,7 +738,7 @@ static void opt_act(int i, int dir) {
 #define OPT_X 30
 #define OPT_Y 6
 #define OPT_W 196
-#define OPT_ROW 18
+#define OPT_ROW 16
 
 static void draw_options(Surf *s, float k) {
     if (k <= 0.001f) return;
@@ -745,7 +750,7 @@ static void draw_options(Surf *s, float k) {
         char b[64]; opt_label(i, b, sizeof b);
         float by = y + 26 + i * OPT_ROW;
         float press = (tch.down && tch.zone == 3 && opt_sel == i) ? 1 : 0;
-        button(s, OPT_X + 8, by, OPT_W - 16, OPT_ROW - 3, b, i == opt_sel, press, a);
+        button(s, OPT_X + 8, by, OPT_W - 16, OPT_ROW - 2, b, i == opt_sel, press, a);
         if (i == OPT_COLOR) {
             rrect(s, OPT_X + OPT_W - 26, by + 3, 10, 10, 3, fav_color(cfg.color), a);
             rrect_line(s, OPT_X + OPT_W - 26, by + 3, 10, 10, 3, 1, 0x505050, a);
@@ -753,42 +758,49 @@ static void draw_options(Surf *s, float k) {
     }
 }
 
-/* ---- a game's settings ---- */
+/* ---- the emulators' settings ---- */
 
 #define GS_X 8
 #define GS_W 240
-#define GS_Y 6
+#define GS_Y 4
 #define GS_ROW 18
-static int gs_rows(void) { const GameOpt *o; return gs_game ? gamecfg_opts(gs_game->sys, &o) : 0; }
-static int gs_btn_y(void) { return GS_Y + 25 + gs_rows() * GS_ROW + 4; }
+#define GS_TABS 19                      /* the DS / GBA page tabs under the title */
+static int gs_row_y0(void) { return GS_Y + 22 + GS_TABS + 2; }
+static int gs_btn_y(void) { return gs_row_y0() + gs_n * GS_ROW + 3; }
+static int gs_rows_of(int sys) { const GameOpt *o; return gamecfg_opts(sys, &o); }
 
-static void gs_open_for(Game *g) {
-    if (!g) return;
-    gs_game = g; gs_open = 1; gs_sel = 0; gs_open_t = T;
-    gs_n = gs_rows();
-    gamecfg_load(g, gs_choice);
+static void gs_open_on(int sys_) {
+    gs_open = 1; gs_sys = sys_; gs_sel = 0; gs_open_t = T;
+    for (int s2 = 0; s2 < SYS_COUNT; s2++) gamecfg_load(s2, gs_choice[s2]);
+    gs_n = gs_rows_of(gs_sys);
     sfx(SFX_OPEN); rumble(12, 0.3f);
     a_hold = 0; glide_dir = 0; coast = 0;
 }
-static void gs_close(int save) {
+static void gs_close(void) {
     if (!gs_open) return;
-    if (save && gs_game && gamecfg_save(gs_game, gs_choice)) plat_log("settings: could not write the game's settings");
+    for (int s2 = 0; s2 < SYS_COUNT; s2++) if (gamecfg_save(s2, gs_choice[s2])) plat_log("settings: could not write system.cfg");
     gs_open = 0;
 }
+static void gs_page(int sys_) {
+    if (sys_ == gs_sys) return;
+    gs_page_dir = sys_ > gs_sys ? 1 : -1; gs_page_t = T;
+    gs_sys = sys_; gs_n = gs_rows_of(gs_sys); gs_sel = MIN(gs_sel, gs_n + 1);
+    sfx(SFX_TAB); rumble(10, 0.3f);
+}
 static void gs_change(int row, int dir) {
-    const GameOpt *o; gamecfg_opts(gs_game->sys, &o);
-    gs_choice[row] = (gs_choice[row] + dir + o[row].n) % o[row].n;
+    const GameOpt *o; gamecfg_opts(gs_sys, &o);
+    gs_choice[gs_sys][row] = (gs_choice[gs_sys][row] + dir + o[row].n) % o[row].n;
     gs_val_t = T; gs_val_dir = dir;
     sfx_pitch(SFX_CURSOR, dir > 0 ? 1.12f : 0.94f); rumble(6, 0.2f);
 }
 static void gs_activate(void) {
     if (gs_sel < gs_n) gs_change(gs_sel, 1);
-    else if (gs_sel == gs_n) {          /* Recommended: every option back to its recommended choice */
-        const GameOpt *o; gamecfg_opts(gs_game->sys, &o);
-        for (int i = 0; i < gs_n; i++) gs_choice[i] = o[i].rec;
+    else if (gs_sel == gs_n) {          /* Recommended: this page's options back to their recommended choices */
+        const GameOpt *o; gamecfg_opts(gs_sys, &o);
+        for (int i = 0; i < gs_n; i++) gs_choice[gs_sys][i] = o[i].rec;
         gs_val_t = T; gs_val_dir = 1;
         sfx_pitch(SFX_SELECT, 1.15f); rumble(15, 0.4f);
-    } else { gs_close(1); start_launch(); }
+    } else { gs_close(); sfx(SFX_BACK); }
 }
 
 static void gear_icon(Surf *s, float cx, float cy, uint32_t c, int a) {
@@ -800,7 +812,7 @@ static void gear_icon(Surf *s, float cx, float cy, uint32_t c, int a) {
     disc(s, cx, cy, 1.6f, 0xffffff, a);
 }
 
-/* the gear in the bottom right corner: tapped (or SELECT), the selected game's settings */
+/* the gear in the bottom right corner: tapped (or SELECT), the emulators' settings */
 #define GEAR_X 238
 #define GEAR_Y 166
 static void draw_gear_button(Surf *s, int alpha) {
@@ -813,68 +825,84 @@ static void draw_gear_button(Surf *s, int alpha) {
 }
 
 static void draw_game_settings(Surf *bot, Surf *top, float k) {
-    if (k <= 0.001f || !gs_game) return;
-    const GameOpt *o; int n = gamecfg_opts(gs_game->sys, &o);
+    if (k <= 0.001f) return;
+    const GameOpt *o; int n = gamecfg_opts(gs_sys, &o);
+    int *ch = gs_choice[gs_sys];
     int a = (int)(255 * MIN(1.0f, k * 1.5f));
     /* the bottom screen: the window, sliding up */
     rect_blend(bot, 0, 0, 256, 192, 0x000000, (int)(80 * k));
-    float y = GS_Y + (1 - ease_out_back(k)) * 170;
-    char title[160], short_t[120]; text_fit(FONT_BD, gs_game->title, 150, short_t, sizeof short_t);
-    snprintf(title, sizeof title, "Settings: %s", short_t);
-    int bh = 25 + n * GS_ROW + 4 + 20;
-    window(bot, GS_X, y, GS_W, bh, title, a);
+    float y = GS_Y + (1 - ease_out_back(k)) * 180;
+    int bh = 22 + GS_TABS + 2 + n * GS_ROW + 3 + 20;
+    window(bot, GS_X, y, GS_W, bh, "Emulator settings", a);
     Accent ac = accent();
+    /* the page tabs: L Nintendo DS | Game Boy Advance R */
+    for (int p = 0; p < 2; p++) {
+        float tx = GS_X + 6 + p * 115, tw = 113, ty = y + 22;
+        int act = gs_sys == p;
+        rrect(bot, tx, ty, tw, GS_TABS - 3, 5, act ? ac.base : 0xc8c8c8, a);
+        rrect_vgrad(bot, tx + 1, ty + 1, tw - 2, GS_TABS - 5, 4, act ? 0xffffff : 0xf0f0f0, act ? ac.pale : 0xe2e2e2, a);
+        btn_glyph(bot, p ? (int)(tx + tw - 15) : (int)tx + 4, (int)ty + 2, p ? "R" : "L", act ? 0x3c3c3c : 0xa0a0a0, a);
+        /* the words centred in the room the glyph leaves */
+        text_center(bot, FONT_SM, (int)(p ? tx + (tw - 16) / 2 : tx + 16 + (tw - 16) / 2), (int)ty - 1, act ? col_mix(ac.base, 0x000000, 130) : 0x8a8a8a, a, p ? "Game Boy Advance" : "Nintendo DS");
+    }
+    /* the rows, sliding in from the side when the page changes */
+    float pk = ease_out_cubic((float)(T - gs_page_t) / 0.22f);
+    int pdx = (int)((1 - pk) * gs_page_dir * 40);
+    Surf rows = *bot; surf_clip(&rows, GS_X + 2, (int)y + 22 + GS_TABS, GS_W - 4, n * GS_ROW + 3);
     for (int i = 0; i < n; i++) {
-        float ry = y + 24 + i * GS_ROW;
-        int sel = gs_sel == i;
+        float ry = y + 22 + GS_TABS + 2 + i * GS_ROW;
+        int sel = gs_sel == i, rx = pdx;
         if (sel) {
-            rrect(bot, GS_X + 4, ry, GS_W - 8, GS_ROW - 2, 5, ac.base, a);
-            rrect_vgrad(bot, GS_X + 5, ry + 1, GS_W - 10, GS_ROW - 4, 4, 0xffffff, ac.pale, a);
-        } else if (i) hline(bot, GS_X + 10, GS_X + GS_W - 11, (int)ry - 1, 0xe2e2e2, a);
-        text(bot, FONT_MD, GS_X + 10, (int)ry - 2, sel ? col_mix(ac.base, 0x000000, 130) : C_TEXT, a, o[i].label);
+            rrect(&rows, GS_X + 4 + rx, ry, GS_W - 8, GS_ROW - 2, 5, ac.base, a);
+            rrect_vgrad(&rows, GS_X + 5 + rx, ry + 1, GS_W - 10, GS_ROW - 4, 4, 0xffffff, ac.pale, a);
+        } else if (i) hline(&rows, GS_X + 10 + rx, GS_X + GS_W - 11 + rx, (int)ry - 1, 0xe2e2e2, a);
+        text(&rows, FONT_MD, GS_X + 10 + rx, (int)ry - 2, sel ? col_mix(ac.base, 0x000000, 130) : C_TEXT, a, o[i].label);
         /* the value between its arrows; the recommended choice wears a little star */
-        int vx0 = GS_X + 100, vx1 = GS_X + GS_W - 10, vc = (vx0 + vx1) / 2;
+        int vx0 = GS_X + 100 + rx, vx1 = GS_X + GS_W - 10 + rx, vc = (vx0 + vx1) / 2;
         uint32_t arrow = sel ? ac.base : 0xb0b0b0;
         float pl = (tch.down && tch.zone == 7 && gs_sel == i && tch.x0 < vc) ? 1 : 0, pr = (tch.down && tch.zone == 7 && gs_sel == i && tch.x0 >= vc) ? 1 : 0;
-        tri_fill(bot, vx0 + 6 - pl, ry + 3.5f, vx0 + 6 - pl, ry + 12.5f, vx0 + 1 - pl, ry + 8, arrow, a);
-        tri_fill(bot, vx1 - 6 + pr, ry + 3.5f, vx1 - 6 + pr, ry + 12.5f, vx1 - 1 + pr, ry + 8, arrow, a);
-        const char *name = o[i].names[gs_choice[i]];
-        int rec = gs_choice[i] == o[i].rec;
+        tri_fill(&rows, vx0 + 6 - pl, ry + 3.5f, vx0 + 6 - pl, ry + 12.5f, vx0 + 1 - pl, ry + 8, arrow, a);
+        tri_fill(&rows, vx1 - 6 + pr, ry + 3.5f, vx1 - 6 + pr, ry + 12.5f, vx1 - 1 + pr, ry + 8, arrow, a);
+        const char *name = o[i].names[ch[i]];
+        int rec = ch[i] == o[i].rec;
         int tw = text_w(FONT_MD, name) + (rec ? 10 : 0);
         float slide = sel ? (1 - ease_out_cubic((float)(T - gs_val_t) / 0.18f)) * gs_val_dir * 10 : 0;
         int tx = vc - tw / 2 + (int)slide;
-        Surf clip = *bot; surf_clip(&clip, vx0 + 8, (int)ry, vx1 - vx0 - 16, GS_ROW);
+        Surf clip = rows; surf_clip(&clip, MAX(rows.cx0, vx0 + 8), (int)ry, vx1 - vx0 - 16, GS_ROW);
         int ex = text(&clip, FONT_MD, tx, (int)ry - 2, sel ? 0x2a2a2a : 0x505050, a, name);
         if (rec) star(&clip, ex + 5, ry + 8, 3.0f, C_STAR, a);
     }
-    /* Recommended and Play */
-    float by = y + 25 + n * GS_ROW + 2;
+    /* Recommended and Done */
+    float by = y + 22 + GS_TABS + 2 + n * GS_ROW + 3;
     float pr0 = (tch.down && tch.zone == 8 && tch.x0 < 128) ? 1 : 0, pr1 = (tch.down && tch.zone == 8 && tch.x0 >= 128) ? 1 : 0;
     button(bot, GS_X + 8, by, 108, 16, "Recommended", gs_sel == n, pr0, a);
-    button(bot, GS_X + GS_W - 116, by, 108, 16, 0, gs_sel == n + 1, pr1, a);
-    {   /* Play: a play mark and the word */
-        float px = GS_X + GS_W - 116 + 38, py = by + pr1;
-        tri_fill(bot, px, py + 4, px, py + 12, px + 6, py + 8, gs_sel == n + 1 ? ac.base : 0x3a9a3a, a);
-        text(bot, FONT_BD, (int)px + 10, (int)py - 2, gs_sel == n + 1 ? col_mix(ac.base, 0x000000, 120) : C_TEXT, a, "Play");
-    }
+    button(bot, GS_X + GS_W - 116, by, 108, 16, "Done", gs_sel == n + 1, pr1, a);
     /* the top screen: what the highlighted option does, and what the choice does */
     if (!top) return;
     rect_blend(top, 0, 14, 256, 178, 0xf6f6f6, (int)(180 * k));
     float ty = 104 + (1 - ease_out_cubic(k)) * 90;
     window(top, 14, ty, 228, 80, 0, a);
+    const char *who = gs_sys == SYS_NDS ? "every DS game" : "every GBA game";
     if (gs_sel < n) {
         text(top, FONT_BD, 24, (int)ty + 1, col_mix(ac.base, 0x000000, 110), a, o[gs_sel].label);
-        text_right(top, FONT_SM, 232, (int)ty + 3, 0x9a9a9a, a, gs_sel < n && gs_choice[gs_sel] == o[gs_sel].rec ? "recommended" : "");
+        text_right(top, FONT_SM, 232, (int)ty + 3, 0x9a9a9a, a, ch[gs_sel] == o[gs_sel].rec ? "recommended" : "");
         text_wrap_center(top, FONT_SM, 128, (int)ty + 20, 206, 13, C_TEXT_SOFT, a, o[gs_sel].help);
-        char line[200]; snprintf(line, sizeof line, "%s: %s", o[gs_sel].names[gs_choice[gs_sel]], o[gs_sel].notes[gs_choice[gs_sel]]);
+        char line[200]; snprintf(line, sizeof line, "%s: %s", o[gs_sel].names[ch[gs_sel]], o[gs_sel].notes[ch[gs_sel]]);
         text_wrap_center(top, FONT_SM, 128, (int)ty + 46, 206, 13, 0x303030, a, line);
     } else if (gs_sel == n) {
         text(top, FONT_BD, 24, (int)ty + 1, col_mix(ac.base, 0x000000, 110), a, "Recommended");
-        text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, "Every option back to the best balance of looks, speed and battery for this handheld (the ones with a star).");
+        char line[200]; snprintf(line, sizeof line, "This page back to the best balance of looks, speed and battery for this handheld (the choices with a star), for %s.", who);
+        text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, line);
     } else {
-        text(top, FONT_BD, 24, (int)ty + 1, col_mix(ac.base, 0x000000, 110), a, "Play");
-        text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, "Start the game with these settings. They're kept for this game, and EmulationStation shows them too.");
+        text(top, FONT_BD, 24, (int)ty + 1, col_mix(ac.base, 0x000000, 110), a, "Done");
+        text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, "Keep these settings. They're used for every game (EmulationStation's system settings show them too).");
     }
+}
+
+/* open on the page of what's in front of you: the selected game's system, else the tab's */
+static void gs_open_here(void) {
+    Game *g = cur_game(sys);
+    gs_open_on(g ? g->sys : (sys == V_GBA ? SYS_GBA : SYS_NDS));
 }
 
 static void gs_update(void) {
@@ -883,8 +911,10 @@ static void gs_update(void) {
     if (repeat(B_DOWN)) { gs_sel = (gs_sel + 1) % (n + 2); sfx(SFX_CURSOR); }
     if (repeat(B_LEFT)) { if (gs_sel < n) gs_change(gs_sel, -1); else if (gs_sel == n + 1) { gs_sel = n; sfx(SFX_CURSOR); } }
     if (repeat(B_RIGHT)) { if (gs_sel < n) gs_change(gs_sel, 1); else if (gs_sel == n) { gs_sel = n + 1; sfx(SFX_CURSOR); } }
+    if (pressed(B_L1)) gs_page(SYS_NDS);
+    if (pressed(B_R1)) gs_page(SYS_GBA);
     if (pressed(btn_a())) gs_activate();
-    if (pressed(btn_b()) || pressed(B_SELECT)) { gs_close(1); sfx(SFX_BACK); }
+    if (pressed(btn_b()) || pressed(B_SELECT) || pressed(B_START)) { gs_close(); sfx(SFX_BACK); }
 }
 
 /* ---- the boot screens ---- */
@@ -1016,17 +1046,18 @@ static void touch_update(void) {
         tch.down = 1; tch.moved = 0; tch.x0 = tch.x = x; tch.y0 = tch.y = y; tch.t0 = T;
         tch.pos0 = row[sys].pos.x; tch.vel = 0; tch.lastx = (float)x; tch.lastt = T;
         if (gs_open) {
-            int n = gs_n, by = gs_btn_y();
+            int n = gs_n, by = gs_btn_y(), r0 = gs_row_y0();
             if (y >= by - 2 && y < by + 20) tch.zone = 8;
-            else if (y >= GS_Y + 24 && y < GS_Y + 24 + n * GS_ROW && x >= GS_X && x < GS_X + GS_W) {
-                int i = (y - (GS_Y + 24)) / GS_ROW;
+            else if (y >= GS_Y + 22 && y < GS_Y + 22 + GS_TABS) tch.zone = 11;          /* the page tabs */
+            else if (y >= r0 && y < r0 + n * GS_ROW && x >= GS_X && x < GS_X + GS_W) {
+                int i = (y - r0) / GS_ROW;
                 if (i != gs_sel) { gs_sel = i; sfx(SFX_CURSOR); }
                 tch.zone = x >= GS_X + 100 ? 7 : 9;
             } else tch.zone = 10;
             return;
         }
         if (opt_open) tch.zone = 3;
-        else if (x >= GEAR_X - 15 && x < GEAR_X + 15 && y >= GEAR_Y - 10 && y < GEAR_Y + 10 && vn(sys)) tch.zone = 6;
+        else if (x >= GEAR_X - 15 && x < GEAR_X + 15 && y >= GEAR_Y - 10 && y < GEAR_Y + 10) tch.zone = 6;
         else if (y < 18) tch.zone = 1;
         else if (y >= 176) {
             tch.zone = 2;
@@ -1097,11 +1128,12 @@ static void touch_update(void) {
             int i = (int)((tch.y - (OPT_Y + 26)) / OPT_ROW);
             if (i == opt_sel) opt_act(i, 1);
         } else if (tch.zone == 4) { opt_open = 0; opt_t = T; sfx(SFX_BACK); }
-        else if (tch.zone == 6 && !tch.moved) gs_open_for(cur_game(sys));
+        else if (tch.zone == 6 && !tch.moved) gs_open_here();
         else if (tch.zone == 7 && !tch.moved) gs_change(gs_sel, tch.x0 < (GS_X + 100 + GS_X + GS_W - 10) / 2 ? -1 : 1);
         else if (tch.zone == 9 && !tch.moved) gs_change(gs_sel, 1);
         else if (tch.zone == 8 && !tch.moved) { gs_sel = gs_n + (tch.x0 >= 128); gs_activate(); }
-        else if (tch.zone == 10 && !tch.moved) { gs_close(1); sfx(SFX_BACK); }
+        else if (tch.zone == 10 && !tch.moved) { gs_close(); sfx(SFX_BACK); }
+        else if (tch.zone == 11 && !tch.moved) gs_page(tch.x0 < 128 ? SYS_NDS : SYS_GBA);
     }
 }
 
@@ -1180,7 +1212,7 @@ static void menu_update(float dt) {
         /* L / R: along the tabs, NDS - favourites - GBA; SELECT goes round them */
         if (pressed(B_L1)) { int p = tab_pos(sys); if (p > 0) switch_sys(TAB_AT[p - 1]); else { bump_dir = -1; bump_t = T; sfx(SFX_BUMP); } }
         if (pressed(B_R1)) { int p = tab_pos(sys); if (p < 2) switch_sys(TAB_AT[p + 1]); else { bump_dir = 1; bump_t = T; sfx(SFX_BUMP); } }
-        if (pressed(B_SELECT) && vn(sys)) gs_open_for(cur_game(sys));
+        if (pressed(B_SELECT)) gs_open_here();
         /* A: the cartridge sinks in while it's held; letting go starts it */
         if (pressed(btn_a()) && vn(sys)) { a_hold = 1; rumble(10, 0.3f); }
         if (a_hold && !(in.held & BIT(btn_a()))) { a_hold = 0; start_launch(); }
@@ -1430,7 +1462,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             }
             if (t >= 1.25f) { rg = 0; ret_t = -1; music_play(); }
         }
-        if (state == ST_MENU && vn(sys) && !gs_open) draw_gear_button(bot, (int)(255 * intro * (1 - gs_anim)));
+        if (state == ST_MENU && !gs_open) draw_gear_button(bot, (int)(255 * intro * (1 - gs_anim)));
         draw_game_settings(bot, top, gs_anim);
         draw_options(bot, opt_anim);
     }

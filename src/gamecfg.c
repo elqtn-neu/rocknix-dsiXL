@@ -36,7 +36,7 @@ static const GameOpt NDS_OPTS[] = {
 };
 
 static const GameOpt GBA_OPTS[] = {
-    { "Emulator", "core", "Which GBA emulator runs it.", 2, 0,
+    { "Emulator", "core", "Which GBA emulator runs the games.", 2, 0,
       { "mGBA", "gpSP" }, { "mgba", "gpsp" },
       { "The most accurate: every game runs right.", "Lighter on the battery. A few games have glitches." } },
     { "Screen size", "integerscale", "How the GBA's screen fills the top screen.", 2, 0,
@@ -94,24 +94,22 @@ static int find_key(const char *text, const char *key, char *out, int sz) {
     return 0;
 }
 
-void gamecfg_load(const Game *g, int *choice) {
-    const GameOpt *o; int n = gamecfg_opts(g->sys, &o);
+void gamecfg_load(int sys, int *choice) {
+    const GameOpt *o; int n = gamecfg_opts(sys, &o);
     size_t len; char *text = slurp(cfg_path(), &len);
     for (int i = 0; i < n; i++) {
         choice[i] = o[i].rec;
-        if (!text) continue;
-        char key[400], val[128];
-        snprintf(key, sizeof key, "%s[\"%s\"].%s", plat(g->sys), g->file, o[i].key);
-        int found = find_key(text, key, val, sizeof val);
-        if (!found) { snprintf(key, sizeof key, "%s.%s", plat(g->sys), o[i].key); found = find_key(text, key, val, sizeof val); }
-        if (!found) continue;
+        char key[200], val[128];
+        snprintf(key, sizeof key, "%s.%s", plat(sys), o[i].key);
+        if (!text || !find_key(text, key, val, sizeof val)) continue;
         for (int k = 0; k < o[i].n; k++) if (!strcmp(val, o[i].values[k])) choice[i] = k;
     }
     free(text);
 }
 
-int gamecfg_save(const Game *g, const int *choice) {
-    const GameOpt *o; int n = gamecfg_opts(g->sys, &o);
+/* writes the system's keys: all of them (only_missing 0), or those it hasn't got (1) */
+static int save_keys(int sys, const int *choice, int only_missing) {
+    const GameOpt *o; int n = gamecfg_opts(sys, &o);
     const char *path = cfg_path();
     /* ROCKNIX's own lock for this file (profile.d/001-functions), so nothing writes it at the same time */
     int lk = open("/tmp/.system.cfg.lock", O_CREAT | O_RDWR | O_CLOEXEC, 0644);
@@ -121,21 +119,30 @@ int gamecfg_save(const Game *g, const int *choice) {
     FILE *f = fopen(tmp, "w");
     int rc = -1;
     if (f) {
-        /* every line but this game's keys of ours, then those keys with their new values */
-        char prefix[400]; int pl = snprintf(prefix, sizeof prefix, "%s[\"%s\"].", plat(g->sys), g->file);
+        int have[GOPT_MAX] = { 0 };
         for (const char *p = text; p && *p; ) {
             const char *e = strchr(p, '\n');
-            int ll = (int)((e ? e : p + strlen(p)) - p), ours = 0;
-            if (ll > pl && !strncmp(p, prefix, (size_t)pl))
-                for (int i = 0; i < n; i++) { size_t kl = strlen(o[i].key); if ((int)(pl + kl) < ll && !strncmp(p + pl, o[i].key, kl) && p[pl + kl] == '=') ours = 1; }
-            if (!ours) fprintf(f, "%.*s\n", ll, p);
+            int ll = (int)((e ? e : p + strlen(p)) - p), ours = -1;
+            for (int i = 0; i < n; i++) {
+                char key[200]; int kl = snprintf(key, sizeof key, "%s.%s=", plat(sys), o[i].key);
+                if (ll >= kl && !strncmp(p, key, (size_t)kl)) ours = i;
+            }
+            if (ours >= 0) have[ours] = 1;
+            if (ours < 0 || only_missing) fprintf(f, "%.*s\n", ll, p);
             p = e ? e + 1 : 0;
         }
-        for (int i = 0; i < n; i++) fprintf(f, "%s%s=%s\n", prefix, o[i].key, o[i].values[CLAMP(choice[i], 0, o[i].n - 1)]);
+        for (int i = 0; i < n; i++)
+            if (!only_missing || !have[i]) fprintf(f, "%s.%s=%s\n", plat(sys), o[i].key, o[i].values[CLAMP(choice[i], 0, o[i].n - 1)]);
         if (fclose(f) == 0 && rename(tmp, path) == 0) rc = 0;
         else remove(tmp);
     }
     free(text);
     if (lk >= 0) { flock(lk, LOCK_UN); close(lk); }
     return rc;
+}
+int gamecfg_save(int sys, const int *choice) { return save_keys(sys, choice, 0); }
+int gamecfg_defaults(int sys) {
+    const GameOpt *o; int n = gamecfg_opts(sys, &o), c[GOPT_MAX];
+    for (int i = 0; i < n; i++) c[i] = o[i].rec;
+    return save_keys(sys, c, 1);
 }

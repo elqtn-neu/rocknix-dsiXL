@@ -2,6 +2,7 @@
 // style of the Nintendo DSi's, on both panels at the DS's own resolution.
 //
 //   dsixl [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <rom file name>]
+//   dsixl --setup-emulators   the recommended emulator settings into ROCKNIX's system.cfg, where none are set
 //   tests and pictures (headless): --script "<t>:<button>[~<held s>][,...]" --record <dir> --seconds <n>
 //
 // Exit status: 0 quit, 10 launch the game in /tmp/dsixl-launch, 20 EmulationStation, 21 power off, 22 reboot,
@@ -11,6 +12,7 @@
 #include "config.h"
 #include "library.h"
 #include "audio.h"
+#include "gamecfg.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -59,6 +61,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) script = argv[++i];
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) record = argv[++i];
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--setup-emulators")) {
+            /* the installer: the recommended emulator settings, where the system has none of its own yet */
+            int rc = 0;
+            for (int s = 0; s < SYS_COUNT; s++) rc |= gamecfg_defaults(s);
+            printf(rc ? "Couldn't write ROCKNIX's system.cfg\n" : "Emulator settings: the recommended ones set where none were\n");
+            return rc ? 1 : 0;
+        }
         else { fprintf(stderr, "usage: %s [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <file>]\n", argv[0]); return 2; }
     }
     signal(SIGTERM, on_term); signal(SIGINT, on_term);
