@@ -34,8 +34,13 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
   thud, shake, dust, the power lamp. Then white, as the DSi does, and the game.
 - **Back from a game.** The cartridge pops out of the slot, drops through to the bottom screen and lands back in
   its place.
-- **Alive.** Cartridges wobble like jelly when tapped, tilt with a flick, lean toward the selected one, and the
-  newly selected one does a little hop. After 15 seconds untouched, the selected one turns all the way round or a
+- **Tactile navigation.** A press lands in about a tenth of a second, and the selection locks into its frame like a
+  detent: a click, a squeeze of the frame, a short buzz of the vibration motor. Holding left/right glides along
+  the row, faster and faster, and settles on the next cartridge when you let go. A flick coasts on, ticking past
+  each cartridge, and slows to a stop. The ends of the list stretch like rubber and snap back. Holding A sinks the
+  cartridge in; letting go starts it. L and R push their tabs in.
+- **Alive.** Cartridges wobble like jelly when tapped, tilt as the row moves, and lean toward the selected one.
+  After 15 seconds untouched, the selected one turns all the way round or a
   wave runs along the row. Taps leave a burst of stars in your colour. The bottom screen and the selection frame
   take on the selected game's own colour (from its box art), and the pattern slides slower than the row
   (parallax). The cursor tick rises in pitch along the list. On your birthday (`birthday = MM-DD` in
@@ -48,11 +53,11 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 
 | | |
 |---|---|
-| Left / Right | the previous / next game (hold: faster and faster) |
+| Left / Right | the previous / next game (hold: a glide that speeds up) |
 | Up / Down | five games back / on |
 | L / R, SELECT | Nintendo DS / Game Boy Advance |
-| A (or tap the selected cartridge) | start it |
-| START | Options: colour, clock, sound effects, music, look for new games, exit to EmulationStation, power off |
+| A (or tap the selected cartridge) | start it (on release: the cartridge sinks in while held) |
+| START | Options: colour, clock, sound effects, music, vibration, look for new games, exit to EmulationStation, power off |
 | B | close the options |
 
 ## Install (on the handheld, over ssh)
@@ -94,11 +99,13 @@ No account and no key needed:
 | | Nintendo DS | Game Boy Advance |
 |---|---|---|
 | Box art (on the cartridge's label) | GameTDB covers by the game code in the ROM, else libretro-thumbnails | libretro-thumbnails |
-| Label scans | GameTDB, where it has one | – |
+| Cartridge scans (the whole cartridge face) | GameTDB, where it has one | – |
 | Title logo (top screen) | none free: the menu sets the title as a logo | libretro-thumbnails (Named_Logos) |
 
-Your own art always wins. Drop files in `/storage/roms/dsixl/media/<nds|gba>/<box|label|logo>/<ROM name without
-extension>.png` (or `.jpg`): a `label` is used as the whole cartridge label, a `logo` should be a transparent PNG.
+Your own art always wins. Drop files in `/storage/roms/dsixl/media/<nds|gba>/<box|cart|label|logo>/<ROM name
+without extension>.png` (or `.jpg`): a `cart` is a scan of the real cartridge (used as its whole face), a `label`
+fills the label area, a `box` is cropped to the label (its spine strip, rating and publisher strip cut off), a
+`logo` should be a transparent PNG.
 The menu also reads EmulationStation's scraped media beside the ROMs (`images/<name>-marquee.png` as the logo,
 `-thumb`/`-image` as the box), so ScreenScraper art you already have shows up too.
 

@@ -3,12 +3,12 @@
 
   box art   DS: GameTDB (art.gametdb.com, by the game code in the ROM's header), else libretro-thumbnails
             GBA: libretro-thumbnails (github.com/libretro-thumbnails, by No-Intro file name)
-  label     DS: GameTDB's cartridge scans when it has one for the game
+  cart      DS: GameTDB's scans of the real cartridge, when it has one for the game
   logo      GBA: libretro-thumbnails' Named_Logos. (There is no free logo set for DS games: those get the title
             set as a logo by the menu, or put your own in media/nds/logo/, or scrape "marquee" art with
             EmulationStation's scraper: the menu reads <roms>/images/<name>-marquee.png too.)
 
-It writes <media>/<nds|gba>/<box|label|logo>/<rom name without extension>.<png|jpg>, where the menu looks.
+It writes <media>/<nds|gba>/<box|cart|logo>/<rom name without extension>.<png|jpg>, where the menu looks.
 Runs on the handheld (ROCKNIX has python3) or on a computer with the SD card or the network share mounted.
 Only the Python standard library.
 
@@ -198,12 +198,12 @@ def scrape_game(sysname, path, media, lr, force, stats):
                     break
         if b:
             save(media, sysname, 'box', base, b); got.append('box')
-    # a real cartridge label scan, where GameTDB has one
-    if code and (force or not have(media, sysname, 'label', base)):
+    # a scan of the real cartridge, where GameTDB has one: the menu then shows it instead of a made-up label
+    if code and (force or not have(media, sysname, 'cart', base)):
         for reg in regions:
             b = get('https://art.gametdb.com/ds/cart/%s/%s.png' % (reg, code), tries=1)
             if is_image(b):
-                save(media, sysname, 'label', base, b); got.append('label')
+                save(media, sysname, 'cart', base, b); got.append('cartridge scan')
                 break
     # the logo
     if lr and (force or not have(media, sysname, 'logo', base)) and 'Named_Logos' in (lr.folders or {'Named_Logos': 1}):

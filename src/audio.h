@@ -16,12 +16,14 @@ enum {
     SFX_CONTINUE,   /* continue.wav the touch that leaves the health and safety screen */
     SFX_SCROLL,     /* scroll.wav   the scroll bar */
     SFX_ERROR,      /* error.wav    */
+    SFX_NOTCH,      /* notch.wav    the selection locking into the frame */
     SFX_COUNT
 };
 
 void audio_init(void);
 void sfx(int id);
 void sfx_pitch(int id, float pitch);        /* 1 = as is */
+void sfx_ex(int id, float pitch, float vol); /* vol 1 = as is */
 void music_play(void);                      /* music.mp3 / music.wav from the pack, looped; nothing without one */
 void music_fade(float target, float seconds);
 void music_stop(void);

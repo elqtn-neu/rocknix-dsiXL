@@ -30,6 +30,7 @@ typedef struct {
     float gloss;                /* 0..1: the strength of the moving glossy streak (the selected cartridge) */
     float gloss_pos;            /* where the streak is, in texture u+v units (-0.5..2.5 sweeps across) */
     float sheen;                /* 0..1: a clear-coat gradient, brighter at the top of the face */
+    int nearest;                /* texels as they are (the DS's look) rather than smoothed between */
 } Mat;
 
 /* the camera: screen centre of the object, focal length in pixels; vertices are given in camera space (z ahead) */

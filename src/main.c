@@ -2,7 +2,7 @@
 // style of the Nintendo DSi's, on both panels at the DS's own resolution.
 //
 //   dsixl [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <rom file name>]
-//   tests and pictures (headless): --script "<t>:<button>[,...]" --record <dir> --seconds <n>
+//   tests and pictures (headless): --script "<t>:<button>[~<held s>][,...]" --record <dir> --seconds <n>
 //
 // Exit status: 0 quit, 10 launch the game in /tmp/dsixl-launch, 20 EmulationStation, 21 power off, 22 reboot,
 // 3 no display (see device/session.sh).
@@ -20,14 +20,15 @@ static volatile sig_atomic_t term;
 static void on_term(int s) { (void)s; term = 1; }
 
 /* the scripted input of a headless run: "1.0:A,2.5:RIGHT,3:TOUCH@128x100" (each held 0.1 s) */
-typedef struct { double t; int bit; int touch, tx, ty; } Ev;
+typedef struct { double t, hold; int bit; int touch, tx, ty; } Ev;
 static Ev evs[256]; static int nev;
 static void parse_script(const char *s) {
     static const char *names[B_COUNT] = { "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L", "R", "L2", "R2", "SELECT", "START", "MENU", "L3" };
     char buf[4096]; snprintf(buf, sizeof buf, "%s", s);
     for (char *tok = strtok(buf, ","); tok && nev < 256; tok = strtok(0, ",")) {
         char *c = strchr(tok, ':'); if (!c) continue;
-        *c = 0; Ev e = { atof(tok), -1, 0, 0, 0 };
+        *c = 0; Ev e = { atof(tok), 0, -1, 0, 0, 0 };
+        char *h = strchr(c + 1, '~'); if (h) { e.hold = atof(h + 1); *h = 0; }   /* "RIGHT~1.5": held 1.5 s */
         if (!strncasecmp(c + 1, "TOUCH@", 6)) { e.touch = 1; sscanf(c + 7, "%dx%d", &e.tx, &e.ty); }
         else for (int b = 0; b < B_COUNT; b++) if (!strcasecmp(c + 1, names[b])) e.bit = b;
         evs[nev++] = e;
@@ -36,7 +37,7 @@ static void parse_script(const char *s) {
 static void script_input(double t, Input *in) {
     memset(in, 0, sizeof *in);
     for (int i = 0; i < nev; i++) {
-        double held = evs[i].touch ? 0.12 : 0.1;
+        double held = evs[i].hold > 0 ? evs[i].hold : evs[i].touch ? 0.12 : 0.1;
         if (t >= evs[i].t && t < evs[i].t + held) {
             if (evs[i].touch) { in->touch[1] = 1; in->tx[1] = evs[i].tx; in->ty[1] = evs[i].ty; }
             else if (evs[i].bit >= 0) in->held |= BIT(evs[i].bit);

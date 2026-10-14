@@ -85,7 +85,11 @@ static void raster_tri(const SV *a, const SV *b, const SV *c, const Mat *m) {
                 v = (w0 * a->vw + w1 * b->vw + w2 * c->vw) / iw;
             }
             if (m->tex) {
-                col = tex_sample(m->tex, clampf(u, 0, 0.9999f), clampf(v, 0, 0.9999f));
+                if (m->nearest) {
+                    const Img *t = m->tex;
+                    int tx = (int)(clampf(u, 0, 0.9999f) * t->w), ty = (int)(clampf(v, 0, 0.9999f) * t->h);
+                    col = t->px[(size_t)ty * t->w + tx];
+                } else col = tex_sample(m->tex, clampf(u, 0, 0.9999f), clampf(v, 0, 0.9999f));
                 if (CA(col) < 8) continue;
             } else col = m->color | 0xff000000u;
             if (ds) col = col_desat(col, ds);

@@ -35,7 +35,7 @@ static struct {
     double frac; int16_t prev[2], cur[2];
 } mu_;
 
-static const char *const NAMES[SFX_COUNT] = { "boot", "cursor", "select", "launch", "slam", "back", "bump", "tab", "whoosh", "open", "continue", "scroll", "error" };
+static const char *const NAMES[SFX_COUNT] = { "boot", "cursor", "select", "launch", "slam", "back", "bump", "tab", "whoosh", "open", "continue", "scroll", "error", "notch" };
 
 /* ---- files ---- */
 
@@ -227,6 +227,13 @@ static void synth(int id, Snd *s) {
         *s = alloc_snd(0.03f);
         for (int i = 0; i < s->frames; i++) { float t = (float)i / RATE; put(s, i, sinf(2 * PI_F * 3000 * t) * expf(-t * 200) * 0.15f); }
         break;
+    case SFX_NOTCH:     /* a firm little click: a detent */
+        *s = alloc_snd(0.05f);
+        for (int i = 0; i < s->frames; i++) {
+            float t = (float)i / RATE;
+            put(s, i, (sinf(2 * PI_F * 2400 * t) * 0.22f + noise() * 0.18f) * expf(-t * 260) + sinf(2 * PI_F * 620 * t) * expf(-t * 90) * 0.2f);
+        }
+        break;
     case SFX_ERROR:
         *s = alloc_snd(0.3f);
         for (int i = 0; i < s->frames; i++) { float t = (float)i / RATE; put(s, i, (sinf(2 * PI_F * 196 * t) > 0 ? 0.25f : -0.25f) * expf(-t * 9)); }
@@ -309,7 +316,8 @@ void audio_init(void) {
 
 int sound_from_pack(int id) { return id >= 0 && id < SFX_COUNT && from_pack[id]; }
 
-void sfx_pitch(int id, float pitch) {
+void sfx_pitch(int id, float pitch) { sfx_ex(id, pitch, 1); }
+void sfx_ex(int id, float pitch, float vol) {
     if (!started || !cfg.sfx || id < 0 || id >= SFX_COUNT || !snd[id].d) return;
     pthread_mutex_lock(&mu);
     int best = 0; double far = -1;
@@ -319,10 +327,10 @@ void sfx_pitch(int id, float pitch) {
     }
     /* the same sound twice within a few ms (a held d-pad) replaces itself: no phasing */
     for (int v = 0; v < VOICES; v++) if (voice[v].s == &snd[id] && voice[v].pos < RATE * 0.02) { best = v; break; }
-    voice[best].s = &snd[id]; voice[best].pos = 0; voice[best].step = pitch; voice[best].vol = 1;
+    voice[best].s = &snd[id]; voice[best].pos = 0; voice[best].step = pitch; voice[best].vol = vol;
     pthread_mutex_unlock(&mu);
 }
-void sfx(int id) { sfx_pitch(id, 1.0f); }
+void sfx(int id) { sfx_ex(id, 1.0f, 1.0f); }
 
 void music_play(void) {
     if (!started || !cfg.music || mu_.on) return;

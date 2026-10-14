@@ -23,6 +23,7 @@ VGMTrans or Tinke, then export WAV files.
 | `open.wav` | the options window opening | a window/balloon open sound |
 | `scroll.wav` | dragging along the scroll bar | the scroll bar's tick |
 | `error.wav` | nothing to start | the error buzz |
+| `notch.wav` | the selection locking into the frame (a detent) | a short, firm click (the DSi's icon-landing click) |
 | `music.mp3` (or `music.wav`) | the menu's music, looped | the DSi Menu theme |
 
 - **Formats:** WAV (8, 16 or 24-bit PCM, or 32-bit float; mono or stereo; any sample rate) or MP3, under the same

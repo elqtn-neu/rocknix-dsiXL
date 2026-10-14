@@ -193,8 +193,10 @@ void game_load_art(Game *g) {
     char p[900];
     if (!g->label_state) {
         g->label_state = -1;
-        /* a label scan wins; else the box art, cropped to the label's shape (the art on a DS card is the box's) */
-        if (library_media(g, "label", p, sizeof p) && !img_load_fit(p, LABEL_W, LABEL_H, FIT_COVER, cfg.cache, &g->label)) g->label_state = 1;
+        /* a scan of the cartridge itself wins (its whole face), then a label scan, else the box art, cropped to the
+         * label's shape (the art on a cartridge's label is the box's) */
+        if (library_media(g, "cart", p, sizeof p) && !img_load_fit(p, g->sys == SYS_NDS ? 140 : 230, 140, FIT_CONTAIN, cfg.cache, &g->label)) { img_trim(&g->label); g->label_state = 3; }
+        else if (library_media(g, "label", p, sizeof p) && !img_load_fit(p, LABEL_W, LABEL_H, FIT_COVER, cfg.cache, &g->label)) g->label_state = 1;
         else if (library_media(g, "box", p, sizeof p) && !img_load_fit(p, LABEL_W, LABEL_H * 2, FIT_CONTAIN, cfg.cache, &g->label)) g->label_state = 2;
     }
     if (!g->logo_state) {
@@ -254,7 +256,7 @@ void game_tint(Game *g) {
     if (g->tint_state) return;
     if (!g->label_state) game_load_art(g);
     g->tint_state = -1;
-    if ((g->label_state == 1 || g->label_state == 2) && !dominant(&g->label, &g->tint)) g->tint_state = 1;
+    if (g->label_state >= 1 && !dominant(&g->label, &g->tint)) g->tint_state = 1;
     else if (g->icon.px && !dominant(&g->icon, &g->tint)) g->tint_state = 1;
 }
 

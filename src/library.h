@@ -15,7 +15,7 @@ typedef struct {
     int sys;
     Img icon;                       /* the DS banner icon, 32x32 (empty for GBA) */
     /* art, loaded on demand: state 0 not tried, 1 there, -1 none */
-    Img label; int label_state;     /* the cartridge face (label art, or the box art cropped to fit) */
+    Img label; int label_state;     /* 1 a label scan, 2 box art (cropped to fit), 3 a scan of the whole cartridge */
     Img logo; int logo_state;       /* the title logo for the top screen */
     void *cart;                     /* cart.c's texture for this game */
     uint32_t tint; int tint_state;  /* the main colour of its art (the bottom screen takes it on); 1 there, -1 none */

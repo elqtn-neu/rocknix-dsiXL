@@ -62,26 +62,27 @@ static void glyph_gba(Surf *s, int x, int y, uint32_t c, int a) {
 
 void emblem(Surf *s, int sys, float cx, int y, uint32_t tint, int alpha) {
     const char *name = sys == 0 ? "Nintendo DS" : "Game Boy Advance";
-    int gw = sys == 0 ? 11 : 22, tw = text_w(FONT_BD, name), w = gw + 7 + tw + 22, h = 19;
-    float x = roundf(cx - w / 2.0f);
-    uint32_t ink = col_mix(tint, 0x000000, 70);
-    /* the rules either side, as on a label */
-    int ly = y + h / 2;
-    for (int side = 0; side < 2; side++) {
-        int x0 = side ? (int)(x + w) + 5 : 12, x1 = side ? 243 : (int)x - 5;
-        if (x1 - x0 < 6) continue;
-        hline(s, x0, x1, ly - 1, col_mix(0xc4c8cc, tint, 60), alpha);
-        hline(s, x0, x1, ly, 0xffffff, alpha);
-        disc(s, side ? x1 + 2.0f : x0 - 2.0f, ly - 0.5f, 1.6f, col_mix(0xb0b6bc, tint, 90), alpha);
+    int gw = sys == 0 ? 11 : 22, tw = text_w(FONT_LG, name), w = gw + 6 + tw;
+    int x = (int)roundf(cx - w / 2.0f);
+    /* pressed into the plastic: a dark edge above, a light one below, the face a shade darker than the stripes */
+    uint32_t face = col_mix(0xcdd2d7, tint, 45), edge = col_mix(0x98a1aa, tint, 55);
+    int gy = y + 5;
+    for (int pass = 0; pass < 3; pass++) {
+        int dy = pass == 0 ? -1 : pass == 1 ? 1 : 0;
+        uint32_t c = pass == 0 ? edge : pass == 1 ? 0xffffff : face;
+        int a = pass == 1 ? alpha * 240 / 255 : alpha;
+        if (sys == 0) glyph_ds(s, x, gy - 1 + dy, c, a); else glyph_gba(s, x, gy - 3 + dy, c, a);
+        text(s, FONT_LG, x + gw + 6, y - 3 + dy, c, a, name);
     }
-    /* the plate: the DSi's white buttons, glossy, a soft shadow */
-    rrect(s, x + 1, y + 2, w, h, h / 2.0f, 0x000000, alpha * 30 / 255);
-    rrect(s, x, y, w, h, h / 2.0f, col_mix(0xb8bcc0, tint, 70), alpha);
-    rrect_vgrad(s, x + 1, y + 1, w - 2, h - 2, h / 2.0f - 1, 0xffffff, col_mix(0xe6e8ea, tint, 30), alpha);
-    rrect(s, x + 3, y + 2, w - 6, (h - 4) / 2.0f, 4, 0xffffff, alpha * 150 / 255);
-    int gx = (int)x + 11, gy = y + 1;
-    if (sys == 0) glyph_ds(s, gx, gy, ink, alpha); else glyph_gba(s, gx, gy - 1, ink, alpha);
-    text(s, FONT_BD, gx + gw + 7, y - 3, 0x3c3c3c, alpha, name);
+    /* the thin rule either side, as on a label */
+    int ly = y + 13;
+    for (int side = 0; side < 2; side++) {
+        int x0 = side ? x + w + 7 : 12, x1 = side ? 243 : x - 7;
+        if (x1 - x0 < 6) continue;
+        hline(s, x0, x1, ly - 1, edge, alpha * 150 / 255);
+        hline(s, x0, x1, ly, 0xffffff, alpha * 220 / 255);
+        disc(s, side ? x1 + 2.0f : x0 - 2.0f, ly - 0.5f, 1.5f, edge, alpha * 170 / 255);
+    }
 }
 
 static void speaker_icon(Surf *s, int x, int y, uint32_t c, int a) {

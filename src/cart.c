@@ -38,20 +38,15 @@ static void build_models(void) {
             float c = 0.9f, k = 3.2f;
             P2 o[] = { { -hw + c, -hh }, { hw - c, -hh }, { hw, -hh + c }, { hw, hh - k }, { hw - k, hh }, { -hw + c, hh }, { -hw, hh - c }, { -hw, -hh + c } };
             for (int i = 0; i < ARRAY_LEN(o); i++) m->out[n++] = o[i];
-            m->plastic = RGB(0x4a, 0x4c, 0x52);
+            m->plastic = RGB(0x46, 0x48, 0x4e);
         } else {
-            /* rounded bottom corners, an arch across the top */
-            float c = 1.2f;
+            /* a flat top with well-rounded corners (the grip end), small chamfers at the contacts' end */
+            float c = 1.0f, r = 3.0f;
             m->out[n++] = (P2){ -hw + c, -hh }; m->out[n++] = (P2){ hw - c, -hh }; m->out[n++] = (P2){ hw, -hh + c };
-            m->out[n++] = (P2){ hw, hh - 2.6f };
-            for (int i = 0; i <= 8; i++) {          /* the arch: from the right shoulder to the left */
-                float t = i / 8.0f, x = hw - 0.8f - t * (m->w - 1.6f);
-                float y = hh - 2.6f + 0.8f + 1.8f * sinf(t * PI_F);
-                if (i == 0) y = hh - 1.8f; else if (i == 8) y = hh - 1.8f;
-                m->out[n++] = (P2){ x, y };
-            }
-            m->out[n++] = (P2){ -hw, hh - 2.6f }; m->out[n++] = (P2){ -hw, -hh + c };
-            m->plastic = RGB(0x8c, 0x8e, 0x96);
+            for (int i = 0; i <= 4; i++) { float a = i / 4.0f * PI_F / 2; m->out[n++] = (P2){ hw - r + r * cosf(a), hh - r + r * sinf(a) }; }
+            for (int i = 0; i <= 4; i++) { float a = PI_F / 2 + i / 4.0f * PI_F / 2; m->out[n++] = (P2){ -hw + r + r * cosf(a), hh - r + r * sinf(a) }; }
+            m->out[n++] = (P2){ -hw, -hh + c };
+            m->plastic = RGB(0x9a, 0x9b, 0xa2);
         }
         m->n = n;
     }
@@ -69,9 +64,13 @@ static void label_art(Game *g, Surf *s, int x, int y, int w, int h) {
         if (g->label_state == 2) {
             /* the box's own band is the label's strip, drawn separately: across the top of a DS box, down the left
              * side of a GBA box */
-            int top = g->sys == SYS_NDS ? g->label.h * 13 / 100 : 0, left = g->sys == SYS_GBA ? g->label.w * 15 / 100 : 0;
-            if (img_alloc(&crop, g->label.w - left, g->label.h - top)) return;
-            for (int y = 0; y < crop.h; y++) memcpy(crop.px + (size_t)y * crop.w, g->label.px + (size_t)(y + top) * g->label.w + left, (size_t)crop.w * 4);
+            /* and what a box has that a label doesn't: the spine strip down the left, the rating and the publisher
+             * along the bottom */
+            int W = g->label.w, H = g->label.h;
+            int top = g->sys == SYS_NDS ? H * 13 / 100 : H * 3 / 100, left = g->sys == SYS_NDS ? W * 9 / 100 : W * 15 / 100;
+            int bottom = H * 13 / 100, right = W * 2 / 100;
+            if (img_alloc(&crop, W - left - right, H - top - bottom)) return;
+            for (int y = 0; y < crop.h; y++) memcpy(crop.px + (size_t)y * crop.w, g->label.px + (size_t)(y + top) * W + left, (size_t)crop.w * 4);
             src = crop;
         }
         img_resize_cover(&src, &fit, w, h, 0.3f);
@@ -107,7 +106,7 @@ static void label_art(Game *g, Surf *s, int x, int y, int w, int h) {
 
 /* per game: the face texture, and the last picture of the cartridge with the pose it was drawn in (a cartridge that
  * only bobs up and down is the same picture at another place: drawn once, then copied) */
-typedef struct { Img front; Img spr; int ox, oy, has; CartPose key; } CartData;
+typedef struct { Img front, half; Img spr; int ox, oy, has; CartPose key; } CartData;
 
 static Img *build_front(Game *g, Img *im) {
     Model *m = &model[g->sys];
@@ -115,7 +114,13 @@ static Img *build_front(Game *g, Img *im) {
     Surf s = as_surf(im);
     uint32_t pl = m->plastic;
     rect_vgrad(&s, 0, 0, im->w, im->h, col_scale(pl, 290), col_scale(pl, 230), 255);
-    if (g->sys == SYS_NDS) {
+    if (g->label_state == 3) {
+        /* a scan of the real cartridge: its whole face, as it is */
+        Img *sc = &g->label;
+        float k = MIN((float)im->w / sc->w, (float)im->h / sc->h);
+        Img fit; img_resize_area(sc, &fit, MAX(1, (int)(sc->w * k)), MAX(1, (int)(sc->h * k)));
+        if (fit.px) { blit(&s, &fit, (im->w - fit.w) / 2, (im->h - fit.h) / 2, 255); img_free(&fit); }
+    } else if (g->sys == SYS_NDS) {
         /* grip ridges along the top */
         for (int i = 0; i < 4; i++) hline(&s, 10, im->w - 22, 3 + i * 3, col_scale(pl, 200), 255), hline(&s, 10, im->w - 22, 4 + i * 3, col_scale(pl, 330), 200);
         int lx = 2 * PPM, ly = 4.6f * PPM, lw = im->w - 4 * PPM, lh = im->h - ly - 2 * PPM;
@@ -167,7 +172,7 @@ static void build_backs(void) {
 void cart_free(Game *g) {
     CartData *cd = g->cart;
     if (!cd) return;
-    img_free(&cd->front); img_free(&cd->spr); free(cd); g->cart = 0;
+    img_free(&cd->front); img_free(&cd->half); img_free(&cd->spr); free(cd); g->cart = 0;
 }
 
 static int same_pose(const CartPose *a, const CartPose *b) {
@@ -199,6 +204,8 @@ void cart_draw(Surf *s, Game *g, const CartPose *p) {
         CartData *cd = calloc(1, sizeof *cd);
         if (!cd) return;
         build_front(g, &cd->front);
+        /* a half-size copy for the small ones: each texel then lands on about one screen sample (no shimmer) */
+        if (cd->front.px) img_resize_area(&cd->front, &cd->half, cd->front.w / 2, cd->front.h / 2);
         g->cart = cd;
     }
     CartData *cd = g->cart;
@@ -211,7 +218,7 @@ void cart_draw(Surf *s, Game *g, const CartPose *p) {
     int cache = p->gloss < 0.001f;
     Model *m = &model[g->sys];
     const float z0 = 260;                              /* the camera's distance: a natural perspective */
-    r3d_camera(cache ? rx : p->sx, cache ? ry : p->sy, p->scale * z0);
+    r3d_camera(rx, ry, p->scale * z0);                 /* on whole pixels, moving or not */
     M3 R = m3_rot(p->yaw, p->pitch, p->roll);
     float kx = p->stretch_x > 0 ? p->stretch_x : 1, ky = p->stretch_y > 0 ? p->stretch_y : 1;
     V3 fr[24], bk[24];
@@ -255,8 +262,9 @@ void cart_draw(Surf *s, Game *g, const CartPose *p) {
         }
         V3 nrm = outward(poly, ctr);
         if (v3_dot(nrm, poly[0]) >= 0) continue;
-        Img *tex = pass ? &cd->front : &back_tex[g->sys];
-        mat.tex = tex && tex->px ? tex : 0; mat.color = m->plastic;
+        /* the face: crisp texels (sampled, not smoothed), from the half-size copy when the cartridge is small */
+        Img *tex = pass ? (p->scale * m->w * 2 < cd->front.w * 0.6f && cd->half.px ? &cd->half : &cd->front) : &back_tex[g->sys];
+        mat.tex = tex && tex->px ? tex : 0; mat.color = m->plastic; mat.nearest = 1;
         mat.shade = face_shade(nrm, &spec) * p->bright; mat.spec = spec;
         mat.gloss = pass ? p->gloss : 0; mat.gloss_pos = p->gloss_pos; mat.sheen = pass ? 0.35f : 0;
         r3d_poly(poly, uv, m->n, &mat);

@@ -6,7 +6,7 @@
 typedef struct {
     char user[32];
     int color;                      /* 0..15: the DS's favourite colours (Settings > User > Color) */
-    int clock24, sfx, music;
+    int clock24, sfx, music, rumble;
     int boot_splash;                /* 1: the health and safety screen at start; 0: straight to the menu */
     int boot_wait;                  /* 0: it waits for a touch or a button, as the DSi; n: continues after n s */
     int swap_ab;                    /* Nintendo layout (A right) is the default */

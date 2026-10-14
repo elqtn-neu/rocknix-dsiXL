@@ -23,7 +23,7 @@ static void defaults(void) {
     memset(&cfg, 0, sizeof cfg);
     snprintf(cfg.user, sizeof cfg.user, "User");
     cfg.color = 0;
-    cfg.clock24 = 1; cfg.sfx = 1; cfg.music = 1; cfg.boot_splash = 1; cfg.boot_wait = 0;
+    cfg.clock24 = 1; cfg.sfx = 1; cfg.music = 1; cfg.rumble = 1; cfg.boot_splash = 1; cfg.boot_wait = 0;
     struct stat st;
     int dev = stat("/storage/roms", &st) == 0;
     snprintf(cfg.dir_nds, sizeof cfg.dir_nds, "%s", dev ? "/storage/roms/nds" : "roms/nds");
@@ -76,7 +76,7 @@ static void read_ini(const char *path, void (*kv)(const char *, const char *)) {
 #define STR(k, field) if (!strcmp(key, k)) { snprintf(cfg.field, sizeof cfg.field, "%s", v); return; }
 #define INT(k, field) if (!strcmp(key, k)) { cfg.field = atoi(v); return; }
 static void cfg_kv(const char *key, const char *v) {
-    STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music)
+    STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music) INT("vibration", rumble)
     INT("boot_splash", boot_splash) INT("boot_wait", boot_wait) INT("swap_ab", swap_ab)
     if (!strcmp(key, "birthday")) { if (sscanf(v, "%d-%d", &cfg.bday_month, &cfg.bday_day) != 2) cfg.bday_month = cfg.bday_day = 0; return; }
     STR("nds_roms", dir_nds) STR("gba_roms", dir_gba) STR("media", media) STR("sounds", sounds)
@@ -121,6 +121,7 @@ void config_save(void) {
         "clock24 = %d\n"
         "sound_effects = %d\n"
         "music = %d\n"
+        "vibration = %d\n"
         "# the health and safety screen at start (1), and how it ends: 0 waits for a touch, n continues after n seconds\n"
         "boot_splash = %d\n"
         "boot_wait = %d\n"
@@ -134,7 +135,7 @@ void config_save(void) {
         "media = %s\n"
         "# your own sound pack: see the README (boot.wav, cursor.wav, select.wav, ..., music.mp3)\n"
         "sounds = %s\n",
-        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, bday,
+        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.rumble, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, bday,
         cfg.dir_nds, cfg.dir_gba, cfg.media, cfg.sounds);
     write_atomic(p, buf);
 }
