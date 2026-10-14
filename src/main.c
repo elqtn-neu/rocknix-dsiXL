@@ -27,7 +27,7 @@ static void on_term(int s) { (void)s; term = 1; }
 typedef struct { double t, hold; int bit; int touch, tx, ty; } Ev;
 static Ev evs[256]; static int nev;
 static void parse_script(const char *s) {
-    static const char *names[B_COUNT] = { "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L", "R", "L2", "R2", "SELECT", "START", "MENU", "L3" };
+    static const char *names[B_COUNT] = { "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L", "R", "L2", "R2", "SELECT", "START", "MENU", "L3", "VOLUP", "VOLDN" };
     char buf[4096]; snprintf(buf, sizeof buf, "%s", s);
     for (char *tok = strtok(buf, ","); tok && nev < 256; tok = strtok(0, ",")) {
         char *c = strchr(tok, ':'); if (!c) continue;

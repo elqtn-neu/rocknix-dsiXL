@@ -184,6 +184,61 @@ static void scan_dir(int sys, const char *dir) {
     closedir(d);
 }
 
+int library_count_files(int sys) {
+    DIR *d = opendir(sys == SYS_NDS ? cfg.dir_nds : cfg.dir_gba);
+    if (!d) return 0;
+    int n = 0; struct dirent *e;
+    while ((e = readdir(d))) if (e->d_name[0] != '.' && has_ext(sys, e->d_name)) n++;
+    closedir(d);
+    return n;
+}
+
+/* ---- what's new, what's hidden, what's been played: small files in the menu's folder ---- */
+
+static Game *find_game(const char *sysname, const char *file) {
+    int s = !strcmp(sysname, "GBA") ? SYS_GBA : SYS_NDS;
+    for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, file)) return &lib[s].g[i];
+    return 0;
+}
+/* lines "SYS<tab>file[<tab>...]": each game named calls fn */
+static void read_list(const char *name, void (*fn)(Game *g, char *rest)) {
+    char p[400]; snprintf(p, sizeof p, "%s/%s", cfg.home, name);
+    FILE *f = fopen(p, "r");
+    if (!f) return;
+    char line[800];
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        char *t1 = strchr(line, '\t'); if (!t1) continue;
+        *t1++ = 0;
+        char *t2 = strchr(t1, '\t'); if (t2) *t2++ = 0;
+        Game *g = find_game(line, t1);
+        if (g) fn(g, t2);
+    }
+    fclose(f);
+}
+static void write_list(const char *name, int (*want)(const Game *g)) {
+    char p[400], tmp[420]; snprintf(p, sizeof p, "%s/%s", cfg.home, name); snprintf(tmp, sizeof tmp, "%s.tmp", p);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) if (want(&lib[s].g[i])) fprintf(f, "%s\t%s\n", sys_short(s), lib[s].g[i].file);
+    if (fclose(f) == 0) rename(tmp, p);
+}
+static void known_fn(Game *g, char *rest) { (void)rest; g->is_new = 0; }
+static void hidden_fn(Game *g, char *rest) { (void)rest; g->hidden = 1; }
+static void plays_fn(Game *g, char *rest) {
+    long secs = 0; long long when = 0;
+    if (rest) sscanf(rest, "%ld\t%lld", &secs, &when);
+    if (secs < 5) return;                    /* (a game that didn't really start) */
+    g->plays++; g->secs += secs;
+    if (when > g->last_played) g->last_played = when;
+}
+static int is_known(const Game *g) { return !g->is_new; }
+static int is_hidden(const Game *g) { return g->hidden; }
+
+void library_mark_played(Game *g) { if (g->is_new) { g->is_new = 0; write_list("known.txt", is_known); } }
+void library_set_hidden(Game *g, int on) { g->hidden = on; write_list("hidden.txt", is_hidden); }
+int library_hidden_count(void) { int n = 0; for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) n += lib[s].g[i].hidden; return n; }
+
 void library_scan(void) {
     for (int s = 0; s < SYS_COUNT; s++) {
         for (int i = 0; i < lib[s].n; i++) { game_free_art(&lib[s].g[i]); img_free(&lib[s].g[i].icon); }
@@ -192,6 +247,13 @@ void library_scan(void) {
     }
     for (int s = 0; s < SYS_COUNT; s++) if (lib[s].n > 1) qsort(lib[s].g, (size_t)lib[s].n, sizeof(Game), cmp_game);
     favs_load();
+    /* new: not in known.txt. The very first time there's no list: nothing is new, they're all known from now */
+    char p[400]; snprintf(p, sizeof p, "%s/known.txt", cfg.home);
+    int first = !file_exists(p);
+    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) lib[s].g[i].is_new = !first;
+    if (first) write_list("known.txt", is_known); else read_list("known.txt", known_fn);
+    read_list("hidden.txt", hidden_fn);
+    read_list("data/plays.log", plays_fn);
 }
 
 static int try_ext(const char *stem, char *out, int sz) {
@@ -269,6 +331,17 @@ void game_load_art(Game *g) {
             }
         }
     }
+}
+
+void game_warm_art(const Game *g) {
+    char p[900]; Img t;
+    /* the same files at the same sizes as game_load_art */
+    if (library_media(g, "cart", p, sizeof p)) { if (!img_load_fit(p, g->sys == SYS_NDS ? 140 : 230, 140, FIT_CONTAIN, cfg.cache, &t)) img_free(&t); }
+    else if (library_media(g, "label", p, sizeof p)) { if (!img_load_fit(p, LABEL_W, LABEL_H, FIT_COVER, cfg.cache, &t)) img_free(&t); }
+    else if (library_media(g, "box", p, sizeof p)) { if (!img_load_fit(p, LABEL_W, LABEL_H * 2, FIT_CONTAIN, cfg.cache, &t)) img_free(&t); }
+    if (library_media(g, "logo", p, sizeof p) && !img_load_fit(p, LOGO_W * 2, LOGO_H * 2, FIT_CONTAIN_DOWN, cfg.cache, &t)) img_free(&t);
+    if (library_media(g, "snap", p, sizeof p) && !img_load_fit(p, 256, 384, FIT_CONTAIN_DOWN, cfg.cache, &t)) img_free(&t);
+    if (library_media(g, "title", p, sizeof p) && !img_load_fit(p, 256, 384, FIT_CONTAIN_DOWN, cfg.cache, &t)) img_free(&t);
 }
 
 /* the main colour of a picture: the hue that most of its colourful pixels share, averaged, then made a clean

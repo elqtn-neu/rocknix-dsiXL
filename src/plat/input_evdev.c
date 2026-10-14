@@ -76,7 +76,7 @@ static void open_dev(const char *path) {
             }
         }
         plat_log("input: pad %s (%s)%s", path, name, have_sticks ? " with sticks" : "");
-    } else if (test_bit(keys, KEY_A) && test_bit(keys, KEY_SPACE)) {
+    } else if ((test_bit(keys, KEY_A) && test_bit(keys, KEY_SPACE)) || test_bit(keys, KEY_VOLUMEUP)) {   /* (the volume keys: their own device) */
         d->kind = D_KBD;
         plat_log("input: keyboard %s (%s)", path, name);
     } else { close(fd); return; }
@@ -126,6 +126,8 @@ void evdev_shutdown(void) { for (int i = 0; i < ndev; i++) close(dev[i].fd); nde
 
 static int pad_bit(int code) {
     switch (code) {
+    case KEY_VOLUMEUP: return B_VOLUP;
+    case KEY_VOLUMEDOWN: return B_VOLDN;
     case BTN_EAST: return B_A;           /* 305: the button labelled A (see the top) */
     case BTN_SOUTH: return B_B;          /* 304: the one labelled B */
     case BTN_NORTH: return B_X;          /* 307 */
@@ -147,6 +149,8 @@ static int pad_bit(int code) {
 }
 static int kbd_bit(int code) {
     switch (code) {
+    case KEY_VOLUMEUP: return B_VOLUP;
+    case KEY_VOLUMEDOWN: return B_VOLDN;
     case KEY_UP: case KEY_W: return B_UP;
     case KEY_DOWN: case KEY_S: return B_DOWN;
     case KEY_LEFT: case KEY_A: return B_LEFT;

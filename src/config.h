@@ -19,6 +19,9 @@ typedef struct {
     char last_fav[256];             /* the selected game in the favourites tab */
     int recent_sys; char recent[256];   /* the game played last (the favourites tab's "continue"); recent "" none */
     int top_view;                   /* the top screen: 0 the logo, 1 the photo (X) */
+    int sort;                       /* the NDS and GBA rows: 0 by name, 1 recently played first, 2 most played first */
+    int show_hidden;                /* hidden games shown (faded) */
+    int seen_help[2];               /* the controls were shown before the first DS / GBA game */
     char last[2][256];              /* the selected game per system (file name) */
 } Config;
 

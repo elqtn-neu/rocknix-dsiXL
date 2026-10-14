@@ -9,6 +9,7 @@
 #include "third_party/stb_image.h"
 #include "img.h"
 #include <stdio.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 
@@ -64,7 +65,8 @@ int img_load_fit(const char *path, int max_w, int max_h, int mode, const char *c
     img_free(&full);
     if (!out->px) return -1;
     if (cpath[0]) {
-        char tmp[620]; snprintf(tmp, sizeof tmp, "%s.tmp", cpath);
+        /* (its own temporary name: the cache-warming thread may be making the same one) */
+        char tmp[640]; snprintf(tmp, sizeof tmp, "%s.%lx.tmp", cpath, (unsigned long)pthread_self());
         FILE *f = fopen(tmp, "wb");
         if (f) {
             CacheHead hd = { { 'D', 'S', 'X', 'C' }, out->w, out->h, key };

@@ -30,6 +30,9 @@
 #include <glob.h>
 #include <ctype.h>
 #include <time.h>
+#include <pthread.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <limits.h>
 
 enum { ST_BOOT, ST_MENU, ST_LAUNCH };
@@ -60,8 +63,10 @@ enum { V_NDS = SYS_NDS, V_GBA = SYS_GBA, V_FAV, V_COUNT };
 static int tab_pos(int v) { return v == V_NDS ? 0 : v == V_FAV ? 1 : 2; }     /* left to right: NDS, star, GBA */
 static const int TAB_AT[3] = { V_NDS, V_FAV, V_GBA };
 static Game **favv; static int favv_n; static int has_cont;
-static int vn(int v) { return v < V_FAV ? lib[v].n : favv_n; }
-static Game *vg(int v, int i) { return v < V_FAV ? &lib[v].g[i] : favv[i]; }
+/* the NDS and GBA rows: the games in the order chosen (by name, recently played, most played), hidden ones left out */
+static int *ord[SYS_COUNT], ordn[SYS_COUNT];
+static int vn(int v) { return v < V_FAV ? ordn[v] : favv_n; }
+static Game *vg(int v, int i) { return v < V_FAV ? &lib[v].g[ord[v][i]] : favv[i]; }
 static int is_cont(int v, int i) { return v == V_FAV && has_cont && i == 0; }
 
 typedef struct { Spring pos; int sel; } Row;
@@ -132,6 +137,7 @@ static double shake_t = -10; static float shake_amp;
 
 static Img boot_logo;
 static double auto_go_t = -1;
+static int help_wait;                   /* the controls window was just closed before a first launch: launch now */
 /* back from a game that didn't start: what went wrong (launch.sh's /tmp/dsixl-error), in a window until OK */
 static int err_pending, err_open; static float err_anim; static char err_title[160], err_msg[400];
 /* power: the screens dim and go off when nothing is touched; the input that wakes them does nothing else */
@@ -163,12 +169,34 @@ static void fav_rebuild(void) {
     for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) max = MAX(max, lib[s].g[i].fav);
     for (int o = 1; o <= max; o++)
         for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++)
-            if (lib[s].g[i].fav == o && &lib[s].g[i] != recent) favv[favv_n++] = &lib[s].g[i];
+            if (lib[s].g[i].fav == o && &lib[s].g[i] != recent && (!lib[s].g[i].hidden || cfg.show_hidden)) favv[favv_n++] = &lib[s].g[i];
     fx_size(V_FAV);
     /* the same game stays selected if it's still there */
     int sel = 0;
     for (int i = 0; i < favv_n; i++) if (favv[i] == keep) sel = i;
     row[V_FAV].sel = CLAMP(sel, 0, MAX(0, favv_n - 1));
+}
+
+static int ord_sys;
+static int ord_cmp(const void *a, const void *b) {
+    int i = *(const int *)a, j = *(const int *)b;
+    const Game *x = &lib[ord_sys].g[i], *y = &lib[ord_sys].g[j];
+    if (cfg.sort == 1 && x->last_played != y->last_played) return x->last_played > y->last_played ? -1 : 1;
+    if (cfg.sort == 2 && x->secs != y->secs) return x->secs > y->secs ? -1 : 1;
+    return i - j;                       /* (the library is in name order) */
+}
+static void order_rebuild(void) {
+    for (int s = 0; s < SYS_COUNT; s++) {
+        free(ord[s]); ord[s] = malloc(sizeof(int) * (size_t)MAX(1, lib[s].n)); ordn[s] = 0;
+        if (!ord[s]) continue;
+        for (int i = 0; i < lib[s].n; i++) if (!lib[s].g[i].hidden || cfg.show_hidden) ord[s][ordn[s]++] = i;
+        ord_sys = s; if (ordn[s] > 1) qsort(ord[s], (size_t)ordn[s], sizeof(int), ord_cmp);
+        /* the same game stays selected */
+        int sel = 0;
+        for (int i = 0; i < ordn[s]; i++) if (!strcmp(vg(s, i)->file, cfg.last[s])) sel = i;
+        row[s].sel = CLAMP(sel, 0, MAX(0, ordn[s] - 1)); row[s].pos.x = (float)row[s].sel; row[s].pos.v = 0;
+        free(fx[s]); fx[s] = calloc((size_t)MAX(1, vn(s)), sizeof(Fx)); fx_n[s] = fx[s] ? vn(s) : 0;
+    }
 }
 
 static Part *spawn_k(int kind, int scr, float x, float y, float vx, float vy, float life, float size, uint32_t c) {
@@ -260,6 +288,40 @@ static void move(int d) {
     int n = r->sel + d;
     if (n < 0 || n >= vn(sys)) { end_bump(d, 1.0f); return; }
     select_game(sys, n, 1);
+}
+
+/* up / down: to the next letter's first game (the previous one's), when the row is in name order */
+static double letter_t = -10;
+static char initial(const Game *g) {
+    for (const char *c = g->title; *c; c++) {
+        if (isalpha((unsigned char)*c)) return (char)toupper((unsigned char)*c);
+        if (isdigit((unsigned char)*c)) return '#';
+    }
+    return '#';
+}
+static void jump(int d) {
+    int n = vn(sys), i = row[sys].sel;
+    if (!n) { sfx(SFX_BUMP); return; }
+    if (sys == V_FAV || cfg.sort != 0) {
+        if (d < 0) move(i > 0 ? -MIN(5, i) : -1); else move(n - 1 - i > 0 ? MIN(5, n - 1 - i) : 1);
+        return;
+    }
+    char c = initial(vg(sys, i));
+    if (d > 0) {
+        while (i < n && initial(vg(sys, i)) == c) i++;
+        if (i >= n) { end_bump(1, 1.0f); return; }
+    } else {
+        int j = i; while (j > 0 && initial(vg(sys, j - 1)) == c) j--;
+        if (j == i) {
+            if (i == 0) { end_bump(-1, 1.0f); return; }
+            c = initial(vg(sys, i - 1)); j = i - 1;
+            while (j > 0 && initial(vg(sys, j - 1)) == c) j--;
+        }
+        i = j;
+    }
+    select_game(sys, i, 1);
+    letter_t = T;
+    rumble(10, 0.3f);
 }
 
 static void switch_sys(int to) {
@@ -434,16 +496,12 @@ static void layout(int s, int i, float pos, float dx, Item *it) {
 
 /* the photo: the game's title screen, printed with a white border like the DSi's top-screen photos, a little
  * crooked (each game its own way), made once per game */
-static Img *game_photo(Game *g) {
-    if (!g) return 0;
-    if (!g->shot_state) game_load_art(g);
-    if (g->shot_state < 1) return 0;
-    if (g->photo.px) return &g->photo;
-    /* a title screen alone (it is the logo) is shown bigger than a screenshot with a logo over it */
-    int pw = g->shot_state == 2 ? 196 : 160, ph = MAX(1, g->shot.h * pw / g->shot.w), B = 5;
-    Img small; img_resize_area(&g->shot, &small, pw, ph);
+static void frame_photo(const Img *src, int pw, uint32_t h, Img *out) {
+    memset(out, 0, sizeof *out);
+    int ph = MAX(1, src->h * pw / src->w), B = 5;
+    Img small; img_resize_area(src, &small, pw, ph);
     Img framed;
-    if (!small.px || img_alloc(&framed, pw + 2 * B, ph + 2 * B)) { img_free(&small); return 0; }
+    if (!small.px || img_alloc(&framed, pw + 2 * B, ph + 2 * B)) { img_free(&small); return; }
     Surf fs = { framed.w, framed.h, framed.w, framed.px, 0, 0, framed.w, framed.h };
     rect_vgrad(&fs, 0, 0, framed.w, framed.h, 0xffffff, 0xf2f2f2, 255);
     rectf(&fs, 0, 0, framed.w, 1, 0xdedede); rectf(&fs, 0, framed.h - 1, framed.w, 1, 0xc8c8c8);
@@ -451,17 +509,26 @@ static Img *game_photo(Game *g) {
     blit(&fs, &small, B, B, 255);
     rect_blend(&fs, B, B, pw, 1, 0x000000, 40); rect_blend(&fs, B, B, 1, ph, 0x000000, 30);   /* the print's edge */
     for (int i = 0; i < framed.w * framed.h; i++) framed.px[i] |= 0xff000000u;
-    uint32_t h = hash_str(g->file);
     float ang = ((h & 1) ? 1 : -1) * (1.6f + (h >> 1) % 10 * 0.12f) * PI_F / 180;
-    img_rotate(&framed, ang, &g->photo);
+    img_rotate(&framed, ang, out);
     img_free(&small); img_free(&framed);
+}
+static Img *photo_for(Game *g);
+static int photo_is_title;
+static Img *game_photo(Game *g) {
+    if (!g) return 0;
+    if (!g->shot_state) game_load_art(g);
+    if (g->shot_state < 1) return 0;
+    if (g->photo.px) return &g->photo;
+    /* a title screen alone (it is the logo) is shown bigger than a screenshot with a logo over it */
+    frame_photo(&g->shot, g->shot_state == 2 ? 196 : 160, hash_str(g->file), &g->photo);
     return g->photo.px ? &g->photo : 0;
 }
 
 static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy, int view) {
     if (!g || alpha <= 0.01f) return;
-    Img *ph = view ? game_photo(g) : 0;     /* the photo only in the photo view (X) */
-    Img *lo = ph && g->shot_state == 2 ? &g->shot : game_logo(g);
+    Img *ph = view ? photo_for(g) : 0;      /* the photo only in the photo view (X) */
+    Img *lo = ph && photo_is_title ? &g->shot : game_logo(g);
     if (!lo) return;
     float bob = sinf((float)T * 1.6f) * 3.0f;
     float cx = 128, cy = 96 + dy + bob;
@@ -469,7 +536,7 @@ static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy, int 
         /* the photo, floating gently on its own beat; the logo over its lower edge, floating on another */
         float pb = sinf((float)T * 1.15f + 1.0f) * 1.5f;
         float pw = ph->w * scale, phh = ph->h * scale;
-        int alone = g->shot_state == 2;               /* the title screen: the logo is in it */
+        int alone = photo_is_title;                   /* the title screen: the logo is in it */
         float px = 128 - pw / 2, py = (alone ? 100 : 80) + dy * 0.6f + pb - phh / 2;
         int pst = fabsf(scale - 1) < 0.01f;
         if (pst) { px = roundf(px); py = roundf(py); }
@@ -632,7 +699,28 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
         if ((hide && g == lg) || (rg && g == rg)) continue;   /* it is flying: drawn by the animation */
         it[k].pose.alpha = alpha * (1 - smoothstep(2.6f, 3.6f, fabsf(it[k].d)));
         if (sy == sys && idx[k] != r->sel) it[k].pose.alpha *= smoothstep(0, 0.3f, (float)(T - reorder_t));
+        if (g->hidden) it[k].pose.alpha *= 0.45f;         /* (hidden, but shown: faded) */
         cart_draw(s, g, &it[k].pose);
+        if (g->resume) {
+            /* a resume point: a little green play mark on its bottom right corner */
+            float cw0, ch0, cd0; cart_size(g->sys, &cw0, &ch0, &cd0);
+            float hh = it[k].w * ch0 / cw0, rx = it[k].x + it[k].w * 0.5f - 2, ry = it[k].y + hh * 0.5f - 3;
+            int ra = (int)(it[k].pose.alpha * 255), r = it[k].f > 0.5f ? 6 : 4;
+            disc(s, rx + 0.5f, ry + 1, (float)r, 0x000000, ra * 50 / 255);
+            disc(s, rx, ry, (float)r, 0x2f9e44, ra);
+            disc(s, rx, ry, r - 1.0f, 0x46c25a, ra);
+            tri_fill(s, rx - r * 0.3f, ry - r * 0.45f, rx - r * 0.3f, ry + r * 0.45f, rx + r * 0.5f, ry, 0xffffff, ra);
+        }
+        if (g->is_new) {
+            /* a new game: a red "NEW" tag on its top left corner, swinging a little */
+            float cw0, ch0, cd0; cart_size(g->sys, &cw0, &ch0, &cd0);
+            float hh = it[k].w * ch0 / cw0, nx = it[k].x - it[k].w * 0.5f - 3, ny = it[k].y - hh * 0.5f - 4 + sinf((float)T * 3 + idx[k]) * 0.8f;
+            int na = (int)(it[k].pose.alpha * 255);
+            rrect(s, nx + 1, ny + 1, 23, 10, 4, 0x000000, na * 40 / 255);
+            rrect(s, nx, ny, 23, 10, 4, 0xd8452e, na);
+            rrect_vgrad(s, nx + 1, ny + 1, 21, 8, 3, 0xf26a4f, 0xd03a24, na);
+            text_center(s, FONT_SM, (int)(nx + 12), (int)ny - 4, 0xffffff, na, "NEW");
+        }
         float cw2, ch2, cd2; cart_size(g->sys, &cw2, &ch2, &cd2);
         float h = it[k].w * ch2 / cw2;
         /* a favourite: a gold star on its top right corner (popping on, or shrinking away when it stops being one) */
@@ -651,8 +739,8 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
 
 static const uint8_t *fav_marks(int s) {
     if (s >= V_FAV) return 0;
-    if (lib[s].n > marks_n) { uint8_t *m = realloc(marks, (size_t)lib[s].n); if (!m) return 0; marks = m; marks_n = lib[s].n; }
-    for (int i = 0; i < lib[s].n; i++) marks[i] = (uint8_t)(lib[s].g[i].fav != 0);
+    if (vn(s) > marks_n) { uint8_t *m = realloc(marks, (size_t)vn(s)); if (!m) return 0; marks = m; marks_n = vn(s); }
+    for (int i = 0; i < vn(s); i++) marks[i] = (uint8_t)(vg(s, i)->fav != 0);
     return marks;
 }
 
@@ -716,6 +804,21 @@ static void draw_bottom(Surf *s, float intro) {
     /* the scroll bar */
     float sby = 176 + (1 - ease_out_cubic(intro)) * 20;
     scroll_bar(s, (int)sby, vn(sys), vn(sys) ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
+    /* the letter, in a bubble over the scroll bar, while jumping or dragging along it */
+    float lk = (float)(T - letter_t);
+    if (lk < 0.8f && vn(sys) && sys != V_FAV) {
+        Game *lg0 = cur_game(sys);
+        float bx = 26 + 204 * (vn(sys) > 1 ? row[sys].pos.x / (vn(sys) - 1) : 0.5f), byy = 150;
+        float pk = ease_out_back(sat(lk / 0.15f)) * (1 - smoothstep(0.6f, 0.8f, lk));
+        int la = (int)(255 * pk);
+        Accent ac = accent();
+        rrect(s, bx - 13 + 1, byy - 13 + 2, 26, 26, 8, 0x000000, la * 40 / 255);
+        rrect(s, bx - 13, byy - 13, 26, 26, 8, ac.base, la);
+        rrect_vgrad(s, bx - 12, byy - 12, 24, 24, 7, 0xffffff, ac.pale, la);
+        tri_fill(s, bx - 4, byy + 12, bx + 4, byy + 12, bx, byy + 17, ac.base, la);
+        char l[2] = { lg0 ? initial(lg0) : '#', 0 };
+        text_center(s, FONT_LG, (int)bx, (int)byy - 13, col_mix(ac.base, 0x000000, 120), la, l);
+    }
 }
 
 /* ---- brightness ---- */
@@ -871,18 +974,22 @@ static void draw_notice(Surf *s) {
 /* ---- the options window ---- */
 
 enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER,
-       OPT_WIFI, OPT_TZ, OPT_ART, OPT_UPDATE, OPT_COUNT };
+       OPT_WIFI, OPT_TZ, OPT_ART, OPT_UPDATE, OPT_SORT, OPT_HIDE, OPT_SHOWHIDDEN, OPT_CONTROLS, OPT_ALBUM, OPT_COUNT };
 static void flows_on_options_open(void);
 static void opt_label_more(int i, char *b, int n);
 static void opt_act_more(int i);
 static int update_found(void);
 
 static void opt_build(void) {
-    static const int order[] = { OPT_EMU, OPT_ART, OPT_WIFI, OPT_TZ, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE,
-                                 OPT_RESCAN, OPT_ES, OPT_POWER };
+    static const int order[] = { OPT_EMU, OPT_SORT, OPT_HIDE, OPT_SHOWHIDDEN, OPT_ALBUM, OPT_ART, OPT_WIFI, OPT_TZ, OPT_COLOR,
+                                 OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_CONTROLS, OPT_RESCAN, OPT_ES, OPT_POWER };
     optn = 0;
     if (update_found()) optv[optn++] = OPT_UPDATE;      /* a newer release on the card: first */
-    for (int i = 0; i < ARRAY_LEN(order); i++) optv[optn++] = order[i];
+    for (int i = 0; i < ARRAY_LEN(order); i++) {
+        if (order[i] == OPT_HIDE && !cur_game(sys)) continue;
+        if (order[i] == OPT_SHOWHIDDEN && !library_hidden_count()) continue;
+        optv[optn++] = order[i];
+    }
 }
 static void opt_open_now(void) {
     flows_on_options_open();
@@ -907,6 +1014,23 @@ static void opt_label(int i, char *b, int n) {
     }
 }
 
+/* the folders read again; returns how many games are new */
+static void warm_start(void);
+static void resume_scan(void);
+static int rescan(void) {
+    int before = 0, after = 0;
+    for (int s = 0; s < SYS_COUNT; s++) for (int k = 0; k < lib[s].n; k++) { before += lib[s].g[k].is_new; cart_free(&lib[s].g[k]); }
+    logo_cur = logo_prev = 0; fav_g = 0;
+    library_scan();
+    for (int s = 0; s < SYS_COUNT; s++) for (int k = 0; k < lib[s].n; k++) after += lib[s].g[k].is_new;
+    order_rebuild();
+    fav_rebuild();
+    row[V_FAV].sel = CLAMP(row[V_FAV].sel, 0, MAX(0, vn(V_FAV) - 1)); row[V_FAV].pos.x = (float)row[V_FAV].sel;
+    resume_scan();
+    warm_start();
+    return after - before;
+}
+
 static void opt_act(int i, int dir) {
     switch (i) {
     case OPT_EMU: opt_open = 0; opt_t = T; gs_open_here(); break;
@@ -915,16 +1039,14 @@ static void opt_act(int i, int dir) {
     case OPT_SFX: cfg.sfx = !cfg.sfx; sfx(SFX_SELECT); config_save(); break;
     case OPT_MUSIC: cfg.music = !cfg.music; if (cfg.music) music_play(); else music_stop(); sfx(SFX_SELECT); config_save(); break;
     case OPT_RUMBLE: cfg.rumble = !cfg.rumble; sfx(SFX_SELECT); config_save(); rumble(30, 0.6f); break;
-    case OPT_RESCAN:
+    case OPT_RESCAN: {
         sfx(SFX_SELECT);
-        for (int s = 0; s < SYS_COUNT; s++) for (int k = 0; k < lib[s].n; k++) cart_free(&lib[s].g[k]);
-        logo_cur = logo_prev = 0;
-        library_scan();
-        fx_alloc();
-        fav_rebuild();
-        for (int s = 0; s < V_COUNT; s++) { row[s].sel = CLAMP(row[s].sel, 0, MAX(0, vn(s) - 1)); row[s].pos.x = row[s].sel; }
+        int n = rescan();
+        if (n > 0) { char m[48]; snprintf(m, sizeof m, n == 1 ? "1 new game" : "%d new games", n); notice(2, m); }
+        else notice(2, "No new games");
         opt_open = 0; opt_t = T;
         break;
+    }
     case OPT_ES: sfx(SFX_SELECT); exit_code = EXIT_TO_ES; break;
     case OPT_POWER: sfx(SFX_SELECT); exit_code = EXIT_POWEROFF; break;
     default: opt_act_more(i); break;
@@ -1490,14 +1612,47 @@ static void opt_label_more(int i, char *b, int n) {
         else snprintf(b, (size_t)n, "Get art from the internet");
         break;
     case OPT_UPDATE: snprintf(b, (size_t)n, "Update to %s", upd_ver); break;
+    case OPT_SORT: snprintf(b, (size_t)n, "Order: %s", cfg.sort == 1 ? "Recently played" : cfg.sort == 2 ? "Most played" : "By name"); break;
+    case OPT_HIDE: { Game *g = cur_game(sys); snprintf(b, (size_t)n, "%s this game", g && g->hidden ? "Unhide" : "Hide"); break; }
+    case OPT_SHOWHIDDEN: snprintf(b, (size_t)n, "Show hidden (%d): %s", library_hidden_count(), cfg.show_hidden ? "On" : "Off"); break;
+    case OPT_CONTROLS: snprintf(b, (size_t)n, "Controls in games"); break;
+    case OPT_ALBUM: snprintf(b, (size_t)n, "Album"); break;
     }
 }
+static void help_open(int sys_, int then_launch);
+static void album_open(void);
 static void opt_act_more(int i) {
     switch (i) {
     case OPT_WIFI: sfx(SFX_SELECT); wifi_open(); break;
     case OPT_TZ: sfx(SFX_SELECT); opt_open = 0; opt_t = T; tz_list(0); break;
     case OPT_ART: sfx(SFX_SELECT); art_start(); break;
     case OPT_UPDATE: sfx(SFX_SELECT); update_start(); break;
+    case OPT_SORT:
+        cfg.sort = (cfg.sort + 1) % 3; state_save(); order_rebuild(); sel_t = T; reorder_t = T;
+        sfx_pitch(SFX_TAB, 0.95f + 0.08f * cfg.sort); rumble(10, 0.3f);
+        break;
+    case OPT_HIDE: {
+        Game *g = cur_game(sys); if (!g) break;
+        int on = !g->hidden;
+        library_set_hidden(g, on);
+        opt_open = 0; opt_t = T;
+        if (sys < V_FAV) {
+            /* the next one along stays selected, or the one before at the end */
+            int i = row[sys].sel;
+            if (on && !cfg.show_hidden) snprintf(cfg.last[sys], sizeof cfg.last[sys], "%s", i + 1 < vn(sys) ? vg(sys, i + 1)->file : i > 0 ? vg(sys, i - 1)->file : "");
+        }
+        order_rebuild(); fav_rebuild(); reorder_t = T; sel_t = T; logo_cur = cur_game(sys); logo_prev = 0;
+        for (int k = 0; k < 10; k++) {
+            float an = k * (2 * PI_F / 10), sp = 40 + (hash3(k, (int)(T * 60), 6) % 30);
+            spawn_k(P_SPARK, 1, 128, geo(sys).cy, cosf(an) * sp, sinf(an) * sp, 0.4f, -1.5f, 0xc8c0b0);
+        }
+        notice(2, on ? (cfg.show_hidden ? "Hidden (shown faded)" : "Hidden: see Options to show") : "Back in the row");
+        sfx(on ? SFX_BACK : SFX_SELECT);
+        break;
+    }
+    case OPT_SHOWHIDDEN: cfg.show_hidden = !cfg.show_hidden; state_save(); order_rebuild(); fav_rebuild(); reorder_t = T; sfx(SFX_SELECT); break;
+    case OPT_CONTROLS: { Game *g = cur_game(sys); opt_open = 0; opt_t = T; help_open(g ? g->sys : SYS_NDS, 0); break; }
+    case OPT_ALBUM: opt_open = 0; opt_t = T; album_open(); break;
     }
 }
 
@@ -1623,6 +1778,424 @@ static void flows_draw_top(Surf *top) {
     }
 }
 
+/* ---- the controls in games: shown before the first game of each system, and from Options ---- */
+
+static int help_on, help_sys, help_then_launch; static float help_anim;
+static void help_open(int sys_, int then_launch) {
+    help_on = 1; help_sys = sys_; help_then_launch = then_launch;
+    sfx(SFX_OPEN); rumble(12, 0.3f); a_hold = 0;
+}
+static void help_close(void) {
+    help_on = 0;
+    if (help_then_launch) {
+        cfg.seen_help[help_sys] = 1; state_save();
+        help_wait = 1; start_launch(); help_wait = 0;
+    } else sfx(SFX_BACK);
+}
+/* a button's name in a little dark chip; returns the end x */
+static int chip(Surf *s, int x, int y, const char *label, int a) {
+    int w = text_w(FONT_SM, label) + 8;
+    rrect(s, x, y, w, 12, 4, 0x3c3c3c, a);
+    text(s, FONT_SM, x + 4, y - 3, 0xffffff, a, label);
+    return x + w;
+}
+static int plus(Surf *s, int x, int y, int a) { return text(s, FONT_MD, x + 2, y - 4, C_TEXT_SOFT, a, "+") + 2; }
+static void help_line(Surf *s, int y, const char *what, const char *const *keys, int nk, int a) {
+    text(s, FONT_SM, 22, y - 2, C_TEXT, a, what);
+    int x = 100;
+    for (int i = 0; i < nk; i++) { if (i) x = plus(s, x, y, a); x = chip(s, x, y, keys[i], a); }
+}
+static void help_draw(Surf *bot, Surf *top) {
+    float k = help_anim;
+    if (k <= 0.001f) return;
+    int a = (int)(255 * MIN(1.0f, k * 1.5f));
+    rect_blend(bot, 0, 0, 256, 192, 0x000000, (int)(90 * k));
+    float y = 8 + (1 - ease_out_back(k)) * 160;
+    int ds = help_sys == SYS_NDS;
+    int h = ds ? 150 : 166;
+    window(bot, 12, y, 232, h, help_then_launch ? "Before you play" : "Controls in games", a);
+    static const char *quit[] = { "L", "SELECT", "START" };
+    int ly = (int)y + 30;
+    help_line(bot, ly, "Leave the game", quit, 3, a); ly += 18;
+    if (ds) {
+        text_wrap_center(bot, FONT_SM, 128, ly - 2, 206, 12, C_TEXT_SOFT, a,
+                         "Hold all three together. With Resume on (Emulator settings), that saves exactly where you are first: the next start carries on from there.");
+        ly += 52;
+        text_wrap_center(bot, FONT_SM, 128, ly, 206, 12, C_TEXT_SOFT, a, "The touch screen is the DS's own. Close the lid to sleep.");
+    } else {
+        static const char *sv[] = { "SELECT", "R" }, *ld[] = { "SELECT", "L" }, *mn[] = { "SELECT", "X" };
+        help_line(bot, ly, "Save a state", sv, 2, a); ly += 16;
+        help_line(bot, ly, "Load it", ld, 2, a); ly += 16;
+        help_line(bot, ly, "RetroArch's menu", mn, 2, a); ly += 20;
+        text_wrap_center(bot, FONT_SM, 128, ly - 2, 206, 12, C_TEXT_SOFT, a,
+                         "(ROCKNIX's usual buttons.) With Resume on, leaving saves where you are. Close the lid to sleep.");
+    }
+    float press = (tch.down && tch.zone == 15) ? 1 : 0;
+    button(bot, 128 - 44, y + h - 24, 88, 18, help_then_launch ? "Play" : "OK", 1, press, a);
+    if (top) {
+        rect_blend(top, 0, 14, 256, 178, 0xf6f6f6, (int)(150 * k));
+        float ty = 70 + (1 - ease_out_cubic(k)) * 90;
+        window(top, 28, ty, 200, 52, 0, a);
+        text_center(top, FONT_BD, 128, (int)ty + 4, C_TEXT, a, ds ? "Nintendo DS" : "Game Boy Advance");
+        text_center(top, FONT_SM, 128, (int)ty + 26, C_TEXT_SOFT, a, help_then_launch ? "Shown once. Options > Controls in games." : "The same for every game.");
+    }
+}
+static void help_update(void) {
+    if (pressed(btn_a()) || pressed(btn_b()) || pressed(B_START)) { help_close(); return; }
+    if (in.touch[1] && !tch.down) { tch.down = 1; tch.zone = 15; tch.moved = 0; }
+    else if (!in.touch[1] && tch.down && tch.zone == 15) { tch.down = 0; help_close(); }
+}
+
+/* ---- the album: the screenshots taken in games ---- */
+
+#define ALB_MAX 400
+typedef struct { char path[400]; long long mt; char low[160]; } AlbPic;
+static AlbPic *alb; static int albn, alb_scanned;
+static int alb_open, alb_sel, alb_show; static float alb_anim; static Spring alb_scroll;
+static double alb_show_t, alb_sel_t;
+static Img *alb_th; static signed char *alb_th_st;
+static Img alb_big, alb_old; static int alb_big_i = -1; static double alb_big_t = -10;
+
+static int alb_cmp(const void *a, const void *b) { const AlbPic *x = a, *y = b; return x->mt < y->mt ? 1 : x->mt > y->mt ? -1 : 0; }
+static void album_scan(void) {
+    alb_scanned = 1;
+    for (int i = 0; i < albn; i++) if (alb_th) img_free(&alb_th[i]);
+    free(alb); free(alb_th); free(alb_th_st); alb = 0; alb_th = 0; alb_th_st = 0; albn = 0;
+    alb = calloc(ALB_MAX, sizeof *alb);
+    if (!alb) return;
+    const char *dirs[] = { getenv("DSIXL_ALBUM"), "/storage/roms/screenshots", "/storage/.config/drastic/screenshots", "/storage/roms/nds/screenshots" };
+    for (int d = 0; d < ARRAY_LEN(dirs); d++) {
+        if (!dirs[d] || !*dirs[d]) continue;
+        static const char *pats[] = { "%s/*.png", "%s/*.jpg", "%s/*.PNG", "%s/*.bmp" };
+        for (int q = 0; q < ARRAY_LEN(pats); q++) {
+            char pat[420]; snprintf(pat, sizeof pat, pats[q], dirs[d]);
+            glob_t g;
+            if (glob(pat, 0, 0, &g)) continue;
+            for (size_t i = 0; i < g.gl_pathc && albn < ALB_MAX; i++) {
+                struct stat st; if (stat(g.gl_pathv[i], &st)) continue;
+                AlbPic *p = &alb[albn++];
+                snprintf(p->path, sizeof p->path, "%s", g.gl_pathv[i]);
+                p->mt = st.st_mtime;
+                const char *b = strrchr(p->path, '/') + 1; int n = 0;
+                for (; *b && n < (int)sizeof p->low - 1; b++) p->low[n++] = (char)tolower((unsigned char)*b);
+                p->low[n] = 0;
+            }
+            globfree(&g);
+        }
+    }
+    qsort(alb, (size_t)albn, sizeof *alb, alb_cmp);
+    alb_th = calloc((size_t)MAX(1, albn), sizeof(Img)); alb_th_st = calloc((size_t)MAX(1, albn), 1);
+}
+static void album_open(void) {
+    album_scan();
+    alb_open = 1; alb_sel = 0; alb_show = 0; alb_scroll.x = alb_scroll.v = 0; alb_big_i = -1; alb_sel_t = T;
+    sfx(SFX_OPEN); rumble(12, 0.3f);
+}
+static void album_close(void) {
+    alb_open = 0; sfx(SFX_BACK);
+    img_free(&alb_big); img_free(&alb_old); alb_big_i = -1;
+    for (int i = 0; i < albn; i++) { img_free(&alb_th[i]); alb_th_st[i] = 0; }
+}
+#define AL_COLS 4
+#define AL_CW 58
+#define AL_CH 44
+#define AL_X 12
+#define AL_Y 28
+#define AL_ROWS 3
+static void album_pick(int i) {
+    if (!albn) return;
+    i = CLAMP(i, 0, albn - 1);
+    if (i == alb_sel) return;
+    alb_sel = i; alb_sel_t = T; sfx(SFX_CURSOR);
+}
+static void album_update(float dt) {
+    if (pressed(btn_b()) || pressed(B_START)) { album_close(); return; }
+    if (albn) {
+        if (repeat(B_LEFT)) album_pick(alb_sel - 1);
+        if (repeat(B_RIGHT)) album_pick(alb_sel + 1);
+        if (repeat(B_UP)) album_pick(alb_sel - AL_COLS);
+        if (repeat(B_DOWN)) album_pick(alb_sel + AL_COLS);
+        if (repeat(B_L1)) album_pick(alb_sel - AL_COLS * AL_ROWS);
+        if (repeat(B_R1)) album_pick(alb_sel + AL_COLS * AL_ROWS);
+        if (pressed(btn_a())) { alb_show = !alb_show; alb_show_t = T; sfx_pitch(SFX_SELECT, alb_show ? 1.2f : 0.9f); }
+        if (alb_show && T - alb_show_t > 4) { alb_show_t = T; alb_sel = (alb_sel + 1) % albn; alb_sel_t = T; }
+    }
+    /* touch: a picture is chosen; the chosen one again starts (or stops) the slideshow */
+    int d = in.touch[1];
+    if (d && !tch.down) {
+        tch.down = 1; tch.zone = 16; tch.moved = 0; tch.x0 = in.tx[1]; tch.y0 = in.ty[1];
+        int cx = (in.tx[1] - AL_X) / (AL_CW + 2), cy = (int)((in.ty[1] - AL_Y) / (float)(AL_CH + 2) + alb_scroll.x);
+        if (in.tx[1] >= AL_X && cx < AL_COLS && in.ty[1] >= AL_Y && in.ty[1] < AL_Y + AL_ROWS * (AL_CH + 2)) {
+            int i = cy * AL_COLS + cx;
+            if (i >= 0 && i < albn) { if (i == alb_sel) { alb_show = !alb_show; alb_show_t = T; sfx(SFX_SELECT); } else album_pick(i); }
+        } else if (in.ty[1] >= 172) album_close();
+    } else if (!d && tch.down && tch.zone == 16) tch.down = 0;
+    /* the selected row in sight */
+    int row_ = alb_sel / AL_COLS;
+    float want = alb_scroll.x;
+    if (row_ < want) want = (float)row_;
+    if (row_ > want + AL_ROWS - 1) want = (float)(row_ - AL_ROWS + 1);
+    spring_step(&alb_scroll, want, 400, 36, dt);
+    /* the pictures: the big one when it changes, two thumbnails a frame */
+    if (albn && alb_big_i != alb_sel) {
+        Img src;
+        img_free(&alb_old); alb_old = alb_big; memset(&alb_big, 0, sizeof alb_big);
+        if (!img_load_fit(alb[alb_sel].path, 256, 192, FIT_CONTAIN, cfg.cache, &src)) {
+            for (int q = 0; q < src.w * src.h; q++) src.px[q] |= 0xff000000u;
+            frame_photo(&src, src.w * 150 / src.h > 210 ? 210 : src.w * 150 / src.h, hash_str(alb[alb_sel].path), &alb_big);
+            img_free(&src);
+        }
+        alb_big_i = alb_sel; alb_big_t = T;
+    }
+    int budget = 2;
+    for (int r = (int)alb_scroll.x; r <= (int)alb_scroll.x + AL_ROWS && budget; r++)
+        for (int c = 0; c < AL_COLS && budget; c++) {
+            int i = r * AL_COLS + c;
+            if (i < 0 || i >= albn || alb_th_st[i]) continue;
+            alb_th_st[i] = img_load_fit(alb[i].path, AL_CW - 4, AL_CH - 4, FIT_COVER, cfg.cache, &alb_th[i]) ? -1 : 1;
+            if (alb_th_st[i] > 0) for (int q = 0; q < alb_th[i].w * alb_th[i].h; q++) alb_th[i].px[q] |= 0xff000000u;
+            budget--;
+        }
+}
+static void album_draw(Surf *bot, Surf *top) {
+    float k = alb_anim;
+    if (k <= 0.001f) return;
+    int a = (int)(255 * MIN(1.0f, k * 1.5f));
+    Accent ac = accent();
+    /* the bottom screen: the pictures in a grid on the DSi Camera's dark paper */
+    float dy = (1 - ease_out_cubic(k)) * 192;
+    rect_vgrad(bot, 0, (int)dy, 256, 192, 0x3a3d44, 0x24262b, a);
+    for (int y = (int)dy; y < 192; y += 4) hline(bot, 0, 255, y, 0xffffff, a * 6 / 255);
+    char t[64]; snprintf(t, sizeof t, albn ? "Album  %d / %d" : "Album", alb_sel + 1, albn);
+    text_center(bot, FONT_BD, 128, (int)dy + 3, 0xffffff, a, t);
+    Surf grid = *bot; surf_clip(&grid, 0, (int)dy + AL_Y - 2, 256, AL_ROWS * (AL_CH + 2) + 2);
+    for (int i = 0; i < albn; i++) {
+        int r = i / AL_COLS, c = i % AL_COLS;
+        float ry = r - alb_scroll.x;
+        if (ry < -1 || ry > AL_ROWS) continue;
+        float x = AL_X + c * (AL_CW + 2) + 0, y = dy + AL_Y + ry * (AL_CH + 2);
+        int sel = i == alb_sel;
+        float pop = sel ? 1 + 0.06f * (1 - ease_out_cubic((float)(T - alb_sel_t) / 0.2f)) : 1;
+        float w = AL_CW * pop, h = AL_CH * pop; x -= (w - AL_CW) / 2; y -= (h - AL_CH) / 2;
+        rrect(&grid, x, y, w, h, 3, sel ? ac.base : 0x5a5e66, a);
+        rrect(&grid, x + 2, y + 2, w - 4, h - 4, 2, 0x16171a, a);
+        if (alb_th_st[i] > 0) blit(&grid, &alb_th[i], (int)(x + (w - alb_th[i].w) / 2), (int)(y + (h - alb_th[i].h) / 2), a);
+        if (!sel) rect_blend(&grid, (int)x + 2, (int)y + 2, (int)w - 4, (int)h - 4, 0x000000, a * 50 / 255);
+    }
+    if (!albn) text_wrap_center(bot, FONT_SM, 128, (int)dy + 60, 220, 13, 0xd0d0d0, a,
+                                "No pictures yet. The screenshots you take in games (roms/screenshots) show up here.");
+    text_center(bot, FONT_SM, 128, (int)dy + 176, 0xa8acb4, a, alb_show ? "A: stop the slideshow   B: back" : "A: slideshow   L/R: a page   B: back");
+    /* the top screen: the picture, printed and a little crooked, the last one fading under it */
+    rect_vgrad(top, 0, 0, 256, 192, 0x2c2e33, 0x1c1d21, a);
+    float fk = clampf((float)(T - alb_big_t) / 0.3f, 0, 1);
+    if (alb_old.px && fk < 1) blit(top, &alb_old, 128 - alb_old.w / 2, 96 - alb_old.h / 2, (int)(a * (1 - fk)));
+    if (alb_big.px) {
+        float sc = 0.94f + 0.06f * ease_out_back(fk);
+        float w = alb_big.w * sc, h = alb_big.h * sc;
+        blit_tint(top, &alb_big, 128 - w / 2 + 3, 96 - h / 2 + 4, w, h, 0x000000, a * 90 / 255);
+        blit_scaled(top, &alb_big, 128 - w / 2, 96 - h / 2, w, h, (int)(a * fk), fk < 1);
+    }
+    if (alb_show) { /* the slideshow's progress: a thin line along the bottom */
+        float sp = (float)fmod(T - alb_show_t, 4.0) / 4.0f;
+        rect_blend(top, 0, 190, (int)(256 * sp), 2, ac.base, a);
+    }
+}
+
+/* a game's pictures from the album (its screenshots: named after the game), for the photo view */
+static int alb_of(const Game *g, int *idx, int max) {
+    if (!alb_scanned) album_scan();
+    char lb[256]; int n = 0, m = 0;
+    for (const char *c = g->base; *c && n < 255; c++) lb[n++] = (char)tolower((unsigned char)*c);
+    lb[n] = 0;
+    for (int i = 0; i < albn && m < max; i++) if (n > 2 && !strncmp(alb[i].low, lb, (size_t)n)) idx[m++] = i;
+    return m;
+}
+
+/* ---- resume points ---- */
+
+static int resume_png(const Game *g, char *out, int n) {
+    const char *root = getenv("DSIXL_SAVESTATES");
+    char p[700];
+    if (g->sys == SYS_NDS) {
+        snprintf(p, sizeof p, "%s/nds/%s.resume.dss", root ? root : "/storage/roms/savestates", g->base);
+        if (!file_exists(p)) return -1;
+        snprintf(out, (size_t)n, "%s.png", p);          /* (a picture, when something left one) */
+        return 0;
+    }
+    const char *dirs[] = { root ? root : "/storage/roms/savestates", "/storage/.config/retroarch/states" };
+    for (int d = 0; d < 2; d++) for (int sub = 0; sub < 2; sub++) {
+        snprintf(p, sizeof p, "%s%s/%s.state.auto", dirs[d], sub ? "" : "/gba", g->base);
+        if (file_exists(p)) { snprintf(out, (size_t)n, "%s.png", p); return 0; }
+    }
+    return -1;
+}
+static void resume_scan(void) {
+    char p[720];
+    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) lib[s].g[i].resume = !resume_png(&lib[s].g[i], p, sizeof p);
+}
+/* (photo_is_title: declared above) */
+/* the photo for the top screen: the game's own, its album pictures in turn (every 5 s), and for "continue" the
+ * picture of where it was left, when there is one */
+static Img *photo_for(Game *g) {
+    static Img alt; static int alt_key = -1; static const Game *alt_g;
+    Img *base = game_photo(g);
+    photo_is_title = g->shot_state == 2;
+    int key = -1; char path[720] = "";
+    if (is_cont(sys, row[sys].sel) && g == cur_game(sys) && g->resume && !resume_png(g, path, sizeof path) && file_exists(path)) key = 100000;
+    else {
+        int idx[32], m = alb_of(g, idx, 32);
+        if (!m) return base;
+        int k = ((int)(T / 5)) % (m + (base ? 1 : 0));
+        if (base && k == 0) return base;
+        key = idx[base ? k - 1 : k];
+        snprintf(path, sizeof path, "%s", alb[key].path);
+    }
+    if (alt_key != key || alt_g != g) {
+        img_free(&alt); alt_key = key; alt_g = g;
+        Img src;
+        if (!img_load_fit(path, 256, 192, FIT_CONTAIN, cfg.cache, &src)) {
+            for (int q = 0; q < src.w * src.h; q++) src.px[q] |= 0xff000000u;
+            frame_photo(&src, 160, hash_str(path), &alt);
+            img_free(&src);
+        }
+    }
+    if (!alt.px) return base;
+    photo_is_title = 0;
+    return &alt;
+}
+
+/* ---- the volume keys: ROCKNIX changes the volume, the menu shows it (the DSi's bar, with a speaker) ---- */
+
+static double vol_t = -10, vol_until = -10, vol_read_t; static int vol_pct = -1;
+static int volume_now(void) {
+    const char *e = getenv("DSIXL_SYSTEM_CFG");
+    FILE *f = fopen(e && *e ? e : "/storage/.config/system/configs/system.cfg", "r");
+    int v = -1; char line[256];
+    if (f) { while (fgets(line, sizeof line, f)) if (!strncmp(line, "audio.volume=", 13)) v = atoi(line + 13); fclose(f); }
+    return v;
+}
+static void volume_step(void) {
+    if ((pressed(B_VOLUP) || pressed(B_VOLDN)) && !(in.held & BIT(B_MENU))) {
+        vol_t = T; vol_until = T + 0.8;
+        if (vol_pct < 0) vol_pct = 50;
+        vol_pct = CLAMP(vol_pct + (pressed(B_VOLUP) ? 5 : -5), 0, 100);     /* (straight away; the real level follows) */
+    }
+    if ((in.held & (BIT(B_VOLUP) | BIT(B_VOLDN))) && !(in.held & BIT(B_MENU))) { vol_t = T; vol_until = T + 0.8; }
+    if (T < vol_until && T - vol_read_t > 0.1) { vol_read_t = T; int v = volume_now(); if (v >= 0) vol_pct = v; }
+}
+static void draw_vol_bar(Surf *s) {
+    float k = (float)(T - vol_t);
+    if (k < 0 || k > 1.7f || vol_pct < 0) return;
+    float in_k = ease_out_back(sat(k / 0.24f)), out = 1 - smoothstep(1.3f, 1.7f, k);
+    int a = (int)(255 * out * sat(k / 0.1f));
+    float y = 22 + (1 - in_k) * -26, x = 128 - 56;
+    rrect(s, x + 1, y + 2, 112, 26, 9, 0x000000, a * 40 / 255);
+    rrect(s, x, y, 112, 26, 9, 0xb4b4b4, a);
+    rrect_vgrad(s, x + 1, y + 1, 110, 24, 8, 0xffffff, 0xe8e8e8, a);
+    /* a speaker, its waves for how loud */
+    int sx = (int)x + 10, sy = (int)y + 8;
+    rect_blend(s, sx, sy + 3, 3, 5, 0x505050, a);
+    tri_fill(s, sx + 3, sy + 3, sx + 8, sy - 1, sx + 8, sy + 12, 0x505050, a);
+    tri_fill(s, sx + 3, sy + 8, sx + 8, sy - 1, sx + 8, sy + 12, 0x505050, a);
+    for (int w = 0; w < 2; w++) if (vol_pct > w * 50) for (int i = -2 - w * 2; i <= 2 + w * 2; i++)
+        pblend(s, sx + 11 + w * 3 + (int)(2 - fabsf((float)i) * 0.5f), sy + 5 + i, 0x505050, a);
+    Accent ac = accent();
+    int lit = (vol_pct * 8 + 50) / 100;
+    for (int i = 0; i < 8; i++) {
+        int bx = (int)x + 32 + i * 9, by = (int)y + 7;
+        int on = i < lit;
+        rrect(s, bx, by, 7, 12, 2, on ? col_mix(ac.base, 0x000000, 40) : 0xc4c4c4, a);
+        rrect_vgrad(s, bx + 1, by + 1, 5, 10, 1.5f, on ? col_mix(ac.base, 0xffffff, 90) : 0xe2e2e2, on ? ac.base : 0xd2d2d2, a);
+    }
+}
+
+/* ---- the time of day on the top screen: a warm morning, a golden late afternoon, a violet dusk, a blue night ---- */
+
+static void draw_mood(Surf *s) {
+    time_t now = time(0); struct tm lt; localtime_r(&now, &lt);
+    float h = lt.tm_hour + lt.tm_min / 60.0f;
+    const char *f = getenv("DSIXL_FAKE_HOUR"); if (f) h = (float)atof(f);
+    /* (hour, colour, strength): eased between them */
+    static const struct { float h; uint32_t c; float a; } K[] = {
+        { 0, 0x24366e, 34 }, { 5, 0x24366e, 30 }, { 7, 0xffc39a, 22 }, { 9, 0xffffff, 0 }, { 15.5f, 0xffffff, 0 },
+        { 17.5f, 0xffae5c, 26 }, { 19.5f, 0x8f72c8, 26 }, { 21, 0x24366e, 34 }, { 24, 0x24366e, 34 },
+    };
+    int i = 0; while (i < ARRAY_LEN(K) - 2 && h >= K[i + 1].h) i++;
+    float t = smoothstep(K[i].h, K[i + 1].h, h);
+    float a = lerpf(K[i].a, K[i + 1].a, t);
+    uint32_t c = col_mix(K[i].c, K[i + 1].c, (int)(t * 256));
+    if (K[i].a == 0) c = K[i + 1].c; else if (K[i + 1].a == 0) c = K[i].c;
+    if (a > 0.5f) rect_blend(s, 0, 0, 256, 192, c, (int)a);
+}
+
+/* ---- play time ---- */
+
+static void played_text(const Game *g, char *b, int n) {
+    if (g->is_new && !g->plays) { snprintf(b, (size_t)n, "New: not played yet"); return; }
+    if (!g->plays) { snprintf(b, (size_t)n, "Not played yet"); return; }
+    char when[40] = "";
+    time_t now = time(0);
+    struct tm a, c; time_t lp = (time_t)g->last_played; localtime_r(&lp, &a); localtime_r(&now, &c);
+    long days = (long)((now - lp) / 86400);
+    if (a.tm_yday == c.tm_yday && a.tm_year == c.tm_year) snprintf(when, sizeof when, "today");
+    else if (days < 2) snprintf(when, sizeof when, "yesterday");
+    else if (days < 14) snprintf(when, sizeof when, "%ld days ago", days);
+    else strftime(when, sizeof when, "%b %d", &a);
+    long m = (g->secs + 30) / 60;
+    if (m < 60) snprintf(b, (size_t)n, "Played %ld min  \xc2\xb7  last %s", MAX(1L, m), when);
+    else snprintf(b, (size_t)n, "Played %ldh %02ldm  \xc2\xb7  last %s", m / 60, m % 60, when);
+}
+
+/* ---- the art cache, warmed in the background ---- */
+
+typedef struct { int sys; char base[256]; } WarmItem;
+static void *warm_main(void *arg) {
+    WarmItem *w = arg;
+    setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 15);
+    Game *g = calloc(1, sizeof(Game));
+    for (int i = 0; g && w[i].base[0]; i++) {
+        g->sys = w[i].sys; snprintf(g->base, sizeof g->base, "%s", w[i].base);
+        game_warm_art(g);
+    }
+    free(g); free(w);
+    return 0;
+}
+static void warm_start(void) {
+    int n = 0;
+    for (int s = 0; s < SYS_COUNT; s++) n += lib[s].n;
+    WarmItem *w = calloc((size_t)n + 1, sizeof *w);
+    if (!w) return;
+    /* the games near the selection first */
+    int k = 0;
+    for (int d = 0; k < n && d < 100000; d++) {
+        int any = 0;
+        for (int s = 0; s < SYS_COUNT; s++) for (int sg = -1; sg <= 1; sg += 2) {
+            if (d == 0 && sg > 0) continue;
+            int i = row[s].sel + sg * d;
+            if (i < 0 || i >= vn(s)) continue;
+            any = 1;
+            Game *g = vg(s, i); w[k].sys = s; snprintf(w[k].base, sizeof w[k].base, "%s", g->base); k++;
+        }
+        if (!any) break;
+    }
+    pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&th, &at, warm_main, w)) free(w);
+    pthread_attr_destroy(&at);
+}
+
+/* ---- the games card watched: games put on it (over the network) show up by themselves ---- */
+
+static void watch_card(void) {
+    static double at;
+    if (T - at < 5 || state != ST_MENU || rg || flow != F_NONE || gs_open || opt_open || help_on || alb_open || tch.down) return;
+    at = T;
+    int changed = 0;
+    for (int s = 0; s < SYS_COUNT; s++) if (library_count_files(s) != lib[s].n) changed = 1;
+    if (!changed) return;
+    int n = rescan();
+    if (n > 0) { char m[48]; snprintf(m, sizeof m, n == 1 ? "1 new game" : "%d new games", n); notice(2, m); sfx_pitch(SFX_SELECT, 1.2f); }
+}
+
 /* ---- init ---- */
 
 void ui_init(const UiStart *st) {
@@ -1633,10 +2206,7 @@ void ui_init(const UiStart *st) {
     /* just updated (update.sh leaves the version) */
     FILE *uf = fopen("/tmp/dsixl-updated", "r");
     if (uf) { char v[32] = ""; if (fgets(v, sizeof v, uf)) { v[strcspn(v, "\n")] = 0; char m[64]; snprintf(m, sizeof m, "Updated to %s", v); notice(2, m); } fclose(uf); remove("/tmp/dsixl-updated"); }
-    for (int s = 0; s < SYS_COUNT; s++) {
-        row[s].sel = 0;
-        for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, cfg.last[s])) row[s].sel = i;
-    }
+    order_rebuild();
     fav_rebuild();
     for (int i = 0; i < favv_n; i++) if (!strcmp(favv[i]->file, cfg.last_fav)) row[V_FAV].sel = i;
     if (has_cont) row[V_FAV].sel = 0;                  /* the favourites open on "continue" */
@@ -1674,6 +2244,8 @@ void ui_init(const UiStart *st) {
     }
     /* a birthday: confetti as the menu appears (not when coming back from a game) */
     if (state == ST_MENU && !rg && is_birthday()) { confetti(); confetti_done = 1; }
+    resume_scan();
+    warm_start();
 }
 
 static void snow(Surf *s, float dt) {
@@ -1697,6 +2269,9 @@ static void snow(Surf *s, float dt) {
 static void start_launch(void) {
     Game *g = cur_game(sys);
     if (!g) { sfx(SFX_ERROR); return; }
+    /* the first game of a system: how its controls go, first */
+    if (!cfg.seen_help[g->sys] && !help_wait) { help_open(g->sys, 1); return; }
+    library_mark_played(g);
     lg = g; l_sys = g->sys; l_view = sys;
     state = ST_LAUNCH; st_t = 0;
     sfx(SFX_SELECT);
@@ -1790,6 +2365,7 @@ static void touch_update(void) {
         if (tch.zone == 2 && vn(sys)) {
             int z, i = scroll_bar_hit(x, 176, vn(sys), 5, &z);
             if (!z && i >= 0 && i != row[sys].sel) { select_game(sys, i, 0); sfx(SFX_SCROLL); }
+            if (!z) letter_t = T;
         }
         tch.x = x; tch.y = y;
         return;
@@ -1866,7 +2442,9 @@ static void toggle_fav(void) {
 }
 
 static void menu_update(float dt) {
-    if (flow != F_NONE && !err_open) flow_update(dt);
+    if (help_on) help_update();
+    else if (alb_open) album_update(dt);
+    else if (flow != F_NONE && !err_open) flow_update(dt);
     else if (err_open) { if (pressed(btn_a()) || pressed(btn_b()) || pressed(B_START)) err_close(); }
     else if (gs_open) gs_update();
     else if (opt_open) {
@@ -1903,8 +2481,8 @@ static void menu_update(float dt) {
                 if (n != r->sel) select_game(sys, n, 2);
             }
         }
-        if (repeat(B_UP)) move(row[sys].sel > 0 ? -MIN(5, row[sys].sel) : -1);           /* five at a time */
-        if (repeat(B_DOWN)) { int n = vn(sys) - 1 - row[sys].sel; move(n > 0 ? MIN(5, n) : 1); }
+        if (repeat(B_UP)) jump(-1);              /* by letter (in name order), else five at a time */
+        if (repeat(B_DOWN)) jump(1);
         /* L / R: along the tabs, NDS - favourites - GBA; SELECT goes round them */
         if (pressed(B_L1)) { int p = tab_pos(sys); if (p > 0) switch_sys(TAB_AT[p - 1]); else { bump_dir = -1; bump_t = T; sfx(SFX_BUMP); } }
         if (pressed(B_R1)) { int p = tab_pos(sys); if (p < 2) switch_sys(TAB_AT[p + 1]); else { bump_dir = 1; bump_t = T; sfx(SFX_BUMP); } }
@@ -1919,7 +2497,9 @@ static void menu_update(float dt) {
         }
         if (pressed(B_Y) && vn(sys)) toggle_fav();
     }
-    if (flow == F_NONE) touch_update();
+    if (flow == F_NONE && !help_on && !alb_open) touch_update();
+    help_anim = clampf(help_anim + (help_on ? dt : -dt) / 0.22f, 0, 1);
+    alb_anim = clampf(alb_anim + (alb_open ? dt : -dt) / 0.25f, 0, 1);
     /* a flick coasts on, slowing, ticking past each cartridge, then settles on one */
     if (coast && vn(sys)) {
         Row *r = &row[sys];
@@ -2134,6 +2714,8 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         bri_poll_step();
         battery_watch();
         flows_step(fdt);
+        volume_step();
+        watch_card();
         if (!rg && err_pending) { err_pending = 0; err_open = 1; sfx(SFX_ERROR); rumble_double(20, 0.5f); }
         if (!rg && rescued) { rescued = 0; notice(0, "Game saved: battery at 3%"); }
         { static int announced; if (!rg && !announced && st_t > 1.2 && T - note_t > 4) { announced = 1; if (update_found()) { char m[64]; snprintf(m, sizeof m, "Update %s ready: see Options", upd_ver); notice(2, m); } } }
@@ -2150,6 +2732,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
 
     /* ---- top ---- */
     bg_top(top, T);
+    draw_mood(top);
     float sb_y = (1 - ease_out_cubic(intro)) * -16;
     status_bar(top, sb_y, 255, T);
     if (state == ST_LAUNCH) {
@@ -2169,10 +2752,20 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             draw_logo(top, logo_cur, ka * intro * (1 - smoothstep(0, 0.45f, vk)), sc * (1 - 0.1f * vk), vk * 6, !cfg.top_view);
             float nk = smoothstep(0.3f, 1, vk);
             draw_logo(top, logo_cur, ka * intro * nk, sc * (0.88f + 0.12f * ease_out_back(nk)), (1 - intro) * 20, cfg.top_view);
-        } else draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20, cfg.top_view);
+        } else {
+            /* "continue" with a picture of where it was left: shown whatever the view */
+            int cv = cfg.top_view || (logo_cur && logo_cur->resume && is_cont(sys, row[sys].sel) && logo_cur == cur_game(sys) && state == ST_MENU);
+            draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20, cv);
+            if (state == ST_MENU && logo_cur && cv && ka * intro > 0.5f) {
+                char pt[96];
+                if (!cfg.top_view) snprintf(pt, sizeof pt, "Where you left off");
+                else played_text(logo_cur, pt, sizeof pt);
+                text_center(top, FONT_SM, 128, 176, C_TEXT_SOFT, (int)(220 * ka * intro), pt);
+            }
+        }
     }
     snow(top, fdt);
-    if (state == ST_MENU) { draw_bri_bar(top); draw_notice(top); flows_draw_top(top); }
+    if (state == ST_MENU) { draw_bri_bar(top); draw_vol_bar(top); draw_notice(top); flows_draw_top(top); }
 
     /* ---- bottom ---- */
     if (state == ST_LAUNCH) {
@@ -2222,6 +2815,8 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         draw_game_settings(bot, top, gs_anim);
         draw_options(bot, opt_anim);
         flows_draw(bot, top);
+        help_draw(bot, top);
+        album_draw(bot, top);
         draw_error(bot, err_anim);
     }
 

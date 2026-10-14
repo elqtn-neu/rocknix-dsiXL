@@ -37,8 +37,11 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
         SYS=$(sed -n 1p /tmp/dsixl-launch); ROM=$(sed -n 2p /tmp/dsixl-launch); FILE=$(sed -n 3p /tmp/dsixl-launch)
         echo "$(up) launch $SYS: $ROM"
         [ -f /tmp/dsixl-gpu-governor ] && cat /tmp/dsixl-gpu-governor > $GPU/governor 2>/dev/null
+        G0=$(cut -d' ' -f1 /proc/uptime)
         $D/launch.sh "$SYS" "$ROM"
         echo "$(up) game ended: $?"
+        # how long it was played, for the menu's play times and its "most played" order
+        printf '%s\t%s\t%s\t%s\n' "$SYS" "$FILE" "$(awk -v a="$G0" -v b="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "%d", b - a }')" "$(date +%s)" >> $D/data/plays.log
         $D/backup.sh "$SYS" "$ROM"          # a copy of its save, when it changed
         [ -f $GPU/governor ] && echo powersave > $GPU/governor 2>/dev/null
         ARGS="--return $SYS $FILE"

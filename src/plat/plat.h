@@ -9,6 +9,7 @@
 enum {
     B_UP, B_DOWN, B_LEFT, B_RIGHT, B_A, B_B, B_X, B_Y, B_L1, B_R1, B_L2, B_R2, B_SELECT, B_START, B_MENU,
     B_L3,                               /* clicking the left stick (sprints, whatever the bindings) */
+    B_VOLUP, B_VOLDN,                   /* the volume keys (ROCKNIX changes the volume; the menu shows it) */
     B_COUNT
 };
 #define BIT(b) (1u << (b))

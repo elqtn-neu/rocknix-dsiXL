@@ -86,6 +86,7 @@ static void cfg_kv(const char *key, const char *v) {
 static void state_kv(const char *key, const char *v) {
     INT("system", sys) STR("last_nds", last[0]) STR("last_gba", last[1]) INT("top_view", top_view) STR("last_fav", last_fav)
     INT("recent_system", recent_sys) STR("recent", recent)
+    INT("sort", sort) INT("show_hidden", show_hidden) INT("seen_help_nds", seen_help[0]) INT("seen_help_gba", seen_help[1])
 }
 
 void config_load(void) {
@@ -100,6 +101,7 @@ void config_load(void) {
     cfg.color = CLAMP(cfg.color, 0, 15);
     cfg.sys = CLAMP(cfg.sys, 0, 2);
     cfg.recent_sys = CLAMP(cfg.recent_sys, 0, 1);
+    cfg.sort = CLAMP(cfg.sort, 0, 2);
 }
 
 int file_exists_cfg(const char *p) { struct stat st; return stat(p, &st) == 0; }
@@ -148,10 +150,12 @@ void config_save(void) {
 }
 
 void state_save(void) {
-    char p[400], buf[1400];
+    char p[400], buf[1600];
     snprintf(p, sizeof p, "%s/state.ini", cfg.home);
-    snprintf(buf, sizeof buf, "system = %d\nlast_nds = %s\nlast_gba = %s\nlast_fav = %s\ntop_view = %d\nrecent_system = %d\nrecent = %s\n",
-             cfg.sys, cfg.last[0], cfg.last[1], cfg.last_fav, cfg.top_view, cfg.recent_sys, cfg.recent);
+    snprintf(buf, sizeof buf, "system = %d\nlast_nds = %s\nlast_gba = %s\nlast_fav = %s\ntop_view = %d\nrecent_system = %d\nrecent = %s\n"
+             "sort = %d\nshow_hidden = %d\nseen_help_nds = %d\nseen_help_gba = %d\n",
+             cfg.sys, cfg.last[0], cfg.last[1], cfg.last_fav, cfg.top_view, cfg.recent_sys, cfg.recent,
+             cfg.sort, cfg.show_hidden, cfg.seen_help[0], cfg.seen_help[1]);
     write_atomic(p, buf);
 }
 
