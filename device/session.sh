@@ -39,6 +39,7 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
         [ -f /tmp/dsixl-gpu-governor ] && cat /tmp/dsixl-gpu-governor > $GPU/governor 2>/dev/null
         $D/launch.sh "$SYS" "$ROM"
         echo "$(up) game ended: $?"
+        $D/backup.sh "$SYS" "$ROM"          # a copy of its save, when it changed
         [ -f $GPU/governor ] && echo powersave > $GPU/governor 2>/dev/null
         ARGS="--return $SYS $FILE"
         ;;

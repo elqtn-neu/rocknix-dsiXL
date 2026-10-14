@@ -55,7 +55,7 @@ BIN=$SRC/build/dsixl-aarch64; [ -f $BIN ] || BIN=$SRC/bin/dsixl-aarch64
 mkdir -p $D/data $D/cache /storage/roms/dsixl/media/nds /storage/roms/dsixl/media/gba /storage/roms/dsixl/sounds
 cp $BIN $D/dsixl.new && chmod 755 $D/dsixl.new && mv -f $D/dsixl.new $D/dsixl
 rm -rf $D/assets && cp -r $SRC/assets $D/assets
-for f in session.sh restore.sh start_es.sh launch.sh brightness.sh; do cp $SRC/device/$f $D/$f; chmod 755 $D/$f; done
+for f in session.sh restore.sh start_es.sh launch.sh brightness.sh backup.sh; do cp $SRC/device/$f $D/$f; chmod 755 $D/$f; done
 cp $SRC/tools/dsixl-scrape.py $D/dsixl-scrape.py
 cp $SRC/VERSION $D/VERSION 2>/dev/null || true
 # the recommended emulator settings, only where ROCKNIX has none of its own yet (yours are never touched)

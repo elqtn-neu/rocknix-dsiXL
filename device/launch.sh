@@ -17,6 +17,37 @@ conf() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" $D/config.ini 2>
 sysconf() { grep "^$1=" $CFG 2>/dev/null | tail -n1 | cut -d= -f2-; }
 up() { read u _ < /proc/uptime; echo "[$u]"; }
 CPU=/sys/devices/system/cpu/cpufreq/policy0
+T0=$(cut -d' ' -f1 /proc/uptime)
+rm -f /tmp/dsixl-error /tmp/dsixl-rescued
+
+# what went wrong, for the menu to say when it's back (/tmp/dsixl-error: a title line, then the reason)
+err() { printf '%s\n%s\n' "$1" "$2" > /tmp/dsixl-error; echo "$(up) error: $1: $2"; }
+# a game that ends within a few seconds with an error didn't really start
+check_end() {   # $1 exit status, $2 the emulator's name, $3 its log
+    E=$(awk -v a="$T0" -v b="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { print (b - a < 4) }')
+    if [ "$E" = 1 ] && [ "$1" != 0 ] && [ ! -e /tmp/dsixl-rescued ]; then
+        err "This software couldn't be started." "$2 closed right away (error $1). What it said is in $3"
+    fi
+}
+# the battery nearly empty in a game: save and leave, rather than lose the game (watched every 20 s)
+battery_now() {
+    for d in /sys/class/power_supply/*; do
+        [ "$(cat $d/type 2>/dev/null)" = Battery ] || continue
+        echo "$(cat $d/capacity 2>/dev/null) $(cat $d/status 2>/dev/null)"; return
+    done
+}
+rescue_watch() {    # $@: how to make the game save and quit
+    while sleep 20; do
+        read -r cap st <<EOF
+$(battery_now)
+EOF
+        if [ "$st" = Discharging ] && [ "${cap:-100}" -le 3 ] 2>/dev/null; then
+            echo "$(up) battery at $cap%: saving and leaving the game"
+            touch /tmp/dsixl-rescued; "$@"; break
+        fi
+    done
+}
+[ -f "$ROM" ] || { err "This software couldn't be started." "The game's file isn't there any more: $ROM"; exit 1; }
 
 # sway for the games that need a compositor; stopped again afterwards (the menu needs the panels to itself)
 sway_up() {
@@ -83,14 +114,22 @@ NDS)
         SDL_VIDEODRIVER=dummy XDG_RUNTIME_DIR=$RT DSFLIP_LOG=$DR/dsflip/dsflip.log DSHOOK_SHADER=${SHADER:-none} \
             LD_PRELOAD=$DR/dsflip/libdsflip.so $DR/dsflip/drastic "$ROM" > $DR/dsflip/drastic.out 2>&1 &
         P=$!
-        trap 'kill -9 $P 2>/dev/null' TERM INT
+        # the battery at 3%: the exit hotkey's way out (with resume on, that saves a resume state first)
+        if [ "$RESUME" != 0 ]; then rescue_watch kill -USR1 $P & else rescue_watch kill -TERM $P & fi
+        W=$!
+        trap 'kill -9 $P 2>/dev/null; kill $W 2>/dev/null' TERM INT
         # libdsflip says within a few seconds whether it has the panels ("ready"); without that, no black screens:
         # stop the game and go back to the menu
         v=; i=0
         while [ $i -lt 200 ] && kill -0 $P 2>/dev/null; do v=$(cat /tmp/dsflip-state 2>/dev/null); [ -n "$v" ] && break; sleep 0.05; i=$((i + 1)); done
         echo "$(up) libdsflip: ${v:-no verdict}"
-        [ "$v" = ready ] || kill -9 $P 2>/dev/null
+        if [ "$v" != ready ]; then
+            kill -9 $P 2>/dev/null
+            err "This software couldn't be started." "DraStic couldn't take the screens (${v:-no answer}). What it said is in .config/drastic/dsflip/dsflip.log"
+        fi
         wait $P; rc=$?
+        kill $W 2>/dev/null
+        [ -e /tmp/dsixl-error ] || check_end $rc DraStic .config/drastic/dsflip/drastic.out
         [ -n "$MAXF" ] && echo "$MAXF" > $CPU/scaling_max_freq 2>/dev/null
         [ -n "$GPU_MIN" ] && echo "$GPU_MIN" > $GPU/min_freq 2>/dev/null
         [ -n "$GOV" ] && echo "$GOV" > $CPU/scaling_governor 2>/dev/null
@@ -100,8 +139,11 @@ NDS)
     echo "$(up) no libdsflip: ROCKNIX's DraStic under sway"
     sway_up
     echo "-9 drastic" > /tmp/.process-kill-data
+    rescue_watch killall -TERM drastic & W=$!
     run_emu nds drastic drastic
     rc=$?
+    kill $W 2>/dev/null
+    check_end $rc DraStic /var/log/exec.log
     sway_down
     exit $rc
     ;;
@@ -116,8 +158,12 @@ GBA)
     echo "$(up) RetroArch ($CORE)"
     sway_up
     echo "-9 retroarch" > /tmp/.process-kill-data
+    # the battery at 3%: RetroArch saves (and its resume state, when that's on) on SIGTERM
+    rescue_watch killall -TERM retroarch & W=$!
     run_emu gba "$CORE" "$EMU"
     rc=$?
+    kill $W 2>/dev/null
+    check_end $rc "RetroArch ($CORE)" /var/log/exec.log
     sway_down
     exit $rc
     ;;

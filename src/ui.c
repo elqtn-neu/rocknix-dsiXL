@@ -126,7 +126,10 @@ static double shake_t = -10; static float shake_amp;
 
 static Img boot_logo;
 static double auto_go_t = -1;
+/* back from a game that didn't start: what went wrong (launch.sh's /tmp/dsixl-error), in a window until OK */
+static int err_pending, err_open; static float err_anim; static char err_title[160], err_msg[400];
 /* power: the screens dim and go off when nothing is touched; the input that wakes them does nothing else */
+static int rescued;
 static int pw_mode; static int swallow; static double wake_t = -10; static int wake_black; static uint32_t raw_held; static int raw_touch;           /* A held through the start: "continue" starts by itself at this time */
 
 /* brightness: the DSi's five levels (device/brightness.sh), changed with the Anbernic button + volume (ROCKNIX's
@@ -792,6 +795,25 @@ static void draw_bri_bar(Surf *s) {
     }
 }
 
+/* ---- a game that couldn't start ---- */
+
+#define ERR_W 216
+static int err_h(void) { return 30 + text_wrap_center(0, FONT_SM, 0, 0, ERR_W - 24, 13, 0, 0, err_msg) + 32; }
+static int err_y(void) { return 96 - err_h() / 2; }
+static void draw_error(Surf *s, float k) {
+    if (k <= 0.001f) return;
+    rect_blend(s, 0, 0, 256, 192, 0x000000, (int)(90 * k));
+    int h = err_h();
+    float y = err_y() + (1 - ease_out_back(k)) * 120, x = 128 - ERR_W / 2;
+    int a = (int)(255 * MIN(1.0f, k * 1.5f));
+    window(s, x, y, ERR_W, h, 0, a);
+    text_center(s, FONT_BD, 128, (int)y + 4, 0x303030, a, err_title);
+    int used = text_wrap_center(s, FONT_SM, 128, (int)y + 26, ERR_W - 24, 13, C_TEXT_SOFT, a, err_msg);
+    float press = (tch.down && tch.zone == 14) ? 1 : 0;
+    button(s, 128 - 40, y + 30 + used + 4, 80, 18, "OK", 1, press, a);
+}
+static void err_close(void) { err_open = 0; sfx(SFX_BACK); last_input = T; }
+
 /* ---- the battery: a notice on the top screen when it runs low, and when the charger goes in ---- */
 
 static double note_t = -10; static char note_txt[64]; static int note_kind;   /* 0 low, 1 charging */
@@ -814,7 +836,8 @@ static void draw_notice(Surf *s) {
     if (k < 0 || k > 4) return;
     float in_k = ease_out_back(sat(k / 0.3f)), out = 1 - smoothstep(3.5f, 4, k);
     int a = (int)(255 * out * sat(k / 0.1f));
-    int tw = text_w(FONT_MD, note_txt), w = tw + 40, x = 128 - w / 2;
+    int font = text_w(FONT_MD, note_txt) > 200 ? FONT_SM : FONT_MD;
+    int tw = text_w(font, note_txt), w = tw + 40, x = 128 - w / 2;
     float y = 160 + (1 - in_k) * 40;
     rrect(s, x + 1, y + 2, w, 22, 9, 0x000000, a * 40 / 255);
     rrect(s, x, y, w, 22, 9, note_kind ? 0x6aa84f : 0xd8452e, a);
@@ -824,7 +847,7 @@ static void draw_notice(Surf *s) {
     rect_blend(s, bx, by + 2, 2, 4, 0x505050, a); rect_blend(s, bx + 2, by, 14, 9, 0x505050, a); rect_blend(s, bx + 3, by + 1, 12, 7, 0xffffff, a);
     if (note_kind) { int f = ((int)(k * 3)) % 5; for (int i = 0; i < f; i++) rect_blend(s, bx + 12 - i * 3, by + 2, 2, 5, 0x6aa84f, a); }
     else if (((int)(k * 3)) & 1) rect_blend(s, bx + 12, by + 2, 2, 5, 0xd8452e, a);
-    text(s, FONT_MD, x + 30, (int)y + 1, C_TEXT, a, note_txt);
+    text(s, font, x + 30, (int)y + (font == FONT_SM ? 3 : 1), C_TEXT, a, note_txt);
 }
 
 /* ---- the options window ---- */
@@ -1183,6 +1206,14 @@ void ui_init(const UiStart *st) {
             if (g->sys == s && !strcmp(g->file, st->ret_file)) { row[sys].sel = i; row[sys].pos.x = i; rg = g; r_view = sys; break; }
         }
         if (rg) { ret_t = 0; intro_t = 0.25; }
+        /* how the game went: launch.sh leaves word when it couldn't start one, or saved one for the battery */
+        FILE *f = fopen("/tmp/dsixl-error", "r");
+        if (f) {
+            if (fgets(err_title, sizeof err_title, f) && fgets(err_msg, sizeof err_msg, f)) err_pending = 1;
+            err_title[strcspn(err_title, "\n")] = 0; err_msg[strcspn(err_msg, "\n")] = 0;
+            fclose(f); remove("/tmp/dsixl-error");
+        }
+        if (!access("/tmp/dsixl-rescued", F_OK)) { remove("/tmp/dsixl-rescued"); rescued = 1; }
     }
     if (state == ST_MENU && !rg) music_play();
     fx_alloc();
@@ -1241,6 +1272,12 @@ static void write_launch(void) {
 
 static void touch_update(void) {
     int down = in.touch[1], x = in.tx[1], y = in.ty[1];
+    if (err_open || (tch.down && tch.zone == 14)) {
+        /* the error window: a tap anywhere closes it (the OK button looks pressed while held) */
+        if (down && !tch.down) { tch.down = 1; tch.zone = 14; tch.moved = 0; tch.x0 = x; tch.y0 = y; }
+        else if (!down && tch.down) { tch.down = 0; if (err_open) err_close(); }
+        return;
+    }
     if (down && !tch.down) {
         last_input = T;
         tap_burst(1, (float)x, (float)y);
@@ -1382,7 +1419,8 @@ static void toggle_fav(void) {
 }
 
 static void menu_update(float dt) {
-    if (gs_open) gs_update();
+    if (err_open) { if (pressed(btn_a()) || pressed(btn_b()) || pressed(B_START)) err_close(); }
+    else if (gs_open) gs_update();
     else if (opt_open) {
         if (repeat(B_UP)) { opt_sel = (opt_sel + optn - 1) % optn; sfx(SFX_CURSOR); }
         if (repeat(B_DOWN)) { opt_sel = (opt_sel + 1) % optn; sfx(SFX_CURSOR); }
@@ -1478,6 +1516,7 @@ static void menu_update(float dt) {
     /* the jelly settles; the selection's hop when the row arrives */
     for (int s = 0; s < V_COUNT; s++) for (int i = MAX(0, row[s].sel - 5); i <= MIN(fx_n[s] - 1, row[s].sel + 5); i++) spring_step(&fx[s][i].wob, 0, 430, 7.5f, dt);
     opt_anim = clampf(opt_anim + (opt_open ? dt : -dt) / 0.22f, 0, 1);
+    err_anim = clampf(err_anim + (err_open ? dt : -dt) / 0.22f, 0, 1);
     if (opt_open) opt_follow(dt);
     gs_anim = clampf(gs_anim + (gs_open ? dt : -dt) / 0.24f, 0, 1);
 }
@@ -1646,6 +1685,8 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         menu_update(fdt);
         bri_poll_step();
         battery_watch();
+        if (!rg && err_pending) { err_pending = 0; err_open = 1; sfx(SFX_ERROR); rumble_double(20, 0.5f); }
+        if (!rg && rescued) { rescued = 0; notice(0, "Game saved: battery at 3%"); }
         if (auto_go_t > 0 && T >= auto_go_t) { auto_go_t = -1; if (sys == V_FAV && has_cont && row[V_FAV].sel == 0 && !opt_open && !gs_open) start_launch(); }
     }
     tint_step(fdt);
@@ -1730,6 +1771,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         if (state == ST_MENU && !gs_open) { draw_gear_button(bot, (int)(255 * intro * (1 - gs_anim))); draw_sun_button(bot, (int)(255 * intro * (1 - gs_anim))); }
         draw_game_settings(bot, top, gs_anim);
         draw_options(bot, opt_anim);
+        draw_error(bot, err_anim);
     }
 
     /* the particles, the shake, the fades */
