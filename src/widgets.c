@@ -56,6 +56,59 @@ void bg_bottom(Surf *s, double t, uint32_t tint, int amt, float par_x) {
     }
 }
 
+static const uint8_t STAR7[7][7] = {
+    { 0, 0, 0, 3, 0, 0, 0 }, { 0, 0, 1, 3, 1, 0, 0 }, { 2, 3, 3, 3, 3, 3, 2 }, { 0, 2, 3, 3, 3, 2, 0 },
+    { 0, 1, 3, 2, 3, 1, 0 }, { 0, 2, 2, 0, 2, 2, 0 }, { 0, 1, 0, 0, 0, 1, 0 },
+};
+void bg_favs(Surf *s, double t, uint32_t tint, int amt, float par_x) {
+    uint32_t ca = col_mix(0xf6f0e2, col_mix(tint, 0xffffff, 170), amt), cb = col_mix(0xfcf8ee, col_mix(tint, 0xffffff, 205), amt);
+    for (int y = 0; y < s->h; y++) {
+        uint32_t c = (y & 1) ? cb : ca, *r = s->px + (size_t)y * s->pitch;
+        for (int x = 0; x < s->w; x++) r[x] = c;
+    }
+    int off = (int)(t * 4) % 32, px = ((int)floorf(par_x) % 32 + 32) % 32;
+    for (int cy = -32; cy < s->h + 32; cy += 16) {
+        int row = ((cy + 64) / 16) & 1;
+        for (int cx = -64; cx < s->w + 32; cx += 32) {
+            int x0 = cx + row * 16 + off + px, y0 = cy - off / 2;
+            for (int j = 0; j < 7; j++) for (int i = 0; i < 7; i++) if (STAR7[j][i]) pblend(s, x0 + i, y0 + j, 0xd8b45a, STAR7[j][i] * 11);
+        }
+    }
+}
+
+void shelf(Surf *s, float x0, float x1, int y, int alpha) {
+    /* a white lacquered shelf with a gold edge: its shadow, the top, the front edge */
+    rrect(s, x0 + 2, y + 4, x1 - x0, 7, 3, 0x000000, alpha * 35 / 255);
+    rrect_vgrad(s, x0, y, x1 - x0, 5, 2.5f, 0xffffff, 0xf1ebdc, alpha);
+    rrect_vgrad(s, x0, y + 4, x1 - x0, 4, 2, 0xe8c56a, 0xb7862a, alpha);
+    hline(s, (int)x0 + 3, (int)x1 - 4, y + 4, 0xfbe7a8, alpha);
+    hline(s, (int)x0 + 3, (int)x1 - 4, y, 0xffffff, alpha);
+}
+
+void balloon(Surf *s, float cx, float tip_y, const char *txt, uint32_t ac, int alpha) {
+    int tw = text_w(FONT_SM, txt), w = tw + 20, h = 13;
+    float x = roundf(cx - w / 2.0f), y = roundf(tip_y - 4 - h);
+    rrect(s, x + 1, y + 2, w, h, 6, 0x000000, alpha * 30 / 255);
+    rrect(s, x, y, w, h, 6, col_mix(0xb9b2a0, ac, 60), alpha);
+    rrect_vgrad(s, x + 1, y + 1, w - 2, h - 2, 5, 0xffffff, 0xf6f1e4, alpha);
+    tri_fill(s, cx - 4, y + h - 1, cx + 4, y + h - 1, cx, tip_y, col_mix(0xb9b2a0, ac, 60), alpha);
+    tri_fill(s, cx - 3, y + h - 1.5f, cx + 3, y + h - 1.5f, cx, tip_y - 1.4f, 0xf6f1e4, alpha);
+    /* a little play triangle, then the words */
+    tri_fill(s, x + 6, y + 3.5f, x + 6, y + 9.5f, x + 11, y + 6.5f, ac, alpha);
+    text(s, FONT_SM, (int)x + 14, (int)y - 2, 0x5a4a28, alpha, txt);
+}
+
+void tab_star(Surf *s, int x, int y, int w, int active, float press, int alpha) {
+    int h = 17;
+    float py = y + press * 1.5f;
+    uint32_t face_t = active ? 0xfffdf6 : 0xe6e6e6, face_b = active ? 0xf6ecd2 : 0xd6d6d6;
+    rrect(s, x + 1, py - 6 + 2, w, h + 6, 6, 0x000000, alpha * 22 / 255);
+    rrect_vgrad(s, x, py - 6, w, h + 6, 6, face_t, face_b, alpha * (active ? 245 : 200) / 255);
+    rrect_line(s, x, py - 6, w, h + 6, 6, 1, active ? 0xcfae62 : 0xc6c6c6, alpha);
+    star(s, x + w / 2.0f, py + 7.5f, 5.2f, active ? 0xf6b81c : 0xb0b0b0, alpha);
+    if (active) rect_blend(s, x + 5, (int)py + h - 2, w - 10, 2, C_GOLD, alpha * 220 / 255);
+}
+
 /* the consoles, as little glyphs drawn in pixels */
 static void glyph_ds(Surf *s, int x, int y, uint32_t c, int a) {
     rrect_line(s, x, y + 1, 11, 7, 2, 1.3f, c, a);      /* the top screen: open */
@@ -69,8 +122,9 @@ static void glyph_gba(Surf *s, int x, int y, uint32_t c, int a) {
 }
 
 void emblem(Surf *s, int sys, float cx, int y, uint32_t tint, int alpha) {
-    const char *name = sys == 0 ? "Nintendo DS" : "Game Boy Advance";
-    int gw = sys == 0 ? 11 : 22, tw = text_w(FONT_LG, name), w = gw + 6 + tw;
+    const char *name = sys == 0 ? "Nintendo DS" : sys == 1 ? "Game Boy Advance" : "Favorites";
+    int gw = sys == 0 ? 11 : sys == 1 ? 22 : 13, tw = text_w(FONT_LG, name), w = gw + 6 + tw;
+    if (sys == 2) tint = 0xd9a21c;
     int x = (int)roundf(cx - w / 2.0f);
     /* pressed into the plastic: a dark edge above, a light one below, the face a shade darker than the stripes */
     uint32_t face = col_mix(0xcdd2d7, tint, 45), edge = col_mix(0x98a1aa, tint, 55);
@@ -79,7 +133,9 @@ void emblem(Surf *s, int sys, float cx, int y, uint32_t tint, int alpha) {
         int dy = pass == 0 ? -1 : pass == 1 ? 1 : 0;
         uint32_t c = pass == 0 ? edge : pass == 1 ? 0xffffff : face;
         int a = pass == 1 ? alpha * 240 / 255 : alpha;
-        if (sys == 0) glyph_ds(s, x, gy - 1 + dy, c, a); else glyph_gba(s, x, gy - 3 + dy, c, a);
+        if (sys == 0) glyph_ds(s, x, gy - 1 + dy, c, a);
+        else if (sys == 1) glyph_gba(s, x, gy - 3 + dy, c, a);
+        else star(s, x + 6.5f, gy + 6 + dy, 6.0f, pass == 2 ? col_mix(face, 0xf6b81c, 150) : c, a);
         text(s, FONT_LG, x + gw + 6, y - 3 + dy, c, a, name);
     }
     /* the thin rule either side, as on a label */

@@ -82,7 +82,8 @@ static void cfg_kv(const char *key, const char *v) {
     STR("nds_roms", dir_nds) STR("gba_roms", dir_gba) STR("media", media) STR("sounds", sounds)
 }
 static void state_kv(const char *key, const char *v) {
-    INT("system", sys) STR("last_nds", last[0]) STR("last_gba", last[1]) INT("top_view", top_view)
+    INT("system", sys) STR("last_nds", last[0]) STR("last_gba", last[1]) INT("top_view", top_view) STR("last_fav", last_fav)
+    INT("recent_system", recent_sys) STR("recent", recent)
 }
 
 void config_load(void) {
@@ -95,7 +96,8 @@ void config_load(void) {
     snprintf(p, sizeof p, "%s/state.ini", cfg.home);
     read_ini(p, state_kv);
     cfg.color = CLAMP(cfg.color, 0, 15);
-    cfg.sys = CLAMP(cfg.sys, 0, 1);
+    cfg.sys = CLAMP(cfg.sys, 0, 2);
+    cfg.recent_sys = CLAMP(cfg.recent_sys, 0, 1);
 }
 
 int file_exists_cfg(const char *p) { struct stat st; return stat(p, &st) == 0; }
@@ -141,9 +143,10 @@ void config_save(void) {
 }
 
 void state_save(void) {
-    char p[400], buf[800];
+    char p[400], buf[1400];
     snprintf(p, sizeof p, "%s/state.ini", cfg.home);
-    snprintf(buf, sizeof buf, "system = %d\nlast_nds = %s\nlast_gba = %s\ntop_view = %d\n", cfg.sys, cfg.last[0], cfg.last[1], cfg.top_view);
+    snprintf(buf, sizeof buf, "system = %d\nlast_nds = %s\nlast_gba = %s\nlast_fav = %s\ntop_view = %d\nrecent_system = %d\nrecent = %s\n",
+             cfg.sys, cfg.last[0], cfg.last[1], cfg.last_fav, cfg.top_view, cfg.recent_sys, cfg.recent);
     write_atomic(p, buf);
 }
 

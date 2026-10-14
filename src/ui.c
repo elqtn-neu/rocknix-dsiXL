@@ -43,9 +43,18 @@ static int any_pressed(void) { return (in.held & ~pin.held) != 0 || (in.touch[1]
 
 /* ---- the menu's state ---- */
 
+/* the tabs: the two systems, and the favourites (a mix of both, the game played last first: "continue") */
+enum { V_NDS = SYS_NDS, V_GBA = SYS_GBA, V_FAV, V_COUNT };
+static int tab_pos(int v) { return v == V_NDS ? 0 : v == V_FAV ? 1 : 2; }     /* left to right: NDS, star, GBA */
+static const int TAB_AT[3] = { V_NDS, V_FAV, V_GBA };
+static Game **favv; static int favv_n; static int has_cont;
+static int vn(int v) { return v < V_FAV ? lib[v].n : favv_n; }
+static Game *vg(int v, int i) { return v < V_FAV ? &lib[v].g[i] : favv[i]; }
+static int is_cont(int v, int i) { return v == V_FAV && has_cont && i == 0; }
+
 typedef struct { Spring pos; int sel; } Row;
-static Row row[SYS_COUNT];
-static int sys;                         /* the system shown */
+static Row row[V_COUNT];
+static int sys;                         /* the tab shown (V_*) */
 static double sw_t = -1; static int sw_from, sw_dir;   /* switching systems: since when, from which, which way */
 static Spring frame_pop;                /* the selection frame's bounce */
 static double sel_t;                    /* when the selection last changed */
@@ -79,9 +88,9 @@ static int sb_press; static double sb_press_t;
 static int opt_open; static double opt_t; static int opt_sel; static float opt_anim;
 
 /* launch */
-static Game *lg; static int l_sys; static int launched_file_written;
+static Game *lg; static int l_sys, l_view; static int launched_file_written;
 /* the return from a game */
-static Game *rg; static double ret_t = -1;
+static Game *rg; static int r_view; static double ret_t = -1;
 
 /* particles: dust from the slam, sparkles, confetti */
 enum { P_DUST, P_SPARK, P_CONFETTI };
@@ -90,7 +99,8 @@ static Part parts[192];
 
 /* per cartridge: its jelly wobble and its hop (indexed like lib[s].g) */
 typedef struct { Spring wob; } Fx;
-static Fx *fx[SYS_COUNT]; static int fx_n[SYS_COUNT];
+static Fx *fx[V_COUNT]; static int fx_n[V_COUNT];
+static Spring frame_w, frame_h;         /* the frame's size: a DS card's or a Game Pak's (the favourites mix them) */
 static double last_input = 0;           /* idle moments start 15 s after this */
 static float tint_rgb[3]; static int tint_init;   /* the bottom screen's colour, eased toward the selected game's */
 static int confetti_done;
@@ -102,7 +112,32 @@ static Img boot_logo;
 
 /* ---- helpers ---- */
 
-static Game *cur_game(int s) { return lib[s].n ? &lib[s].g[CLAMP(row[s].sel, 0, lib[s].n - 1)] : 0; }
+static Game *cur_game(int v) { int n = vn(v); return n ? vg(v, CLAMP(row[v].sel, 0, n - 1)) : 0; }
+
+/* the favourites tab's list: the game played last ("continue"), then the favourites in the order they were added */
+static void fx_size(int v) {
+    free(fx[v]); fx[v] = calloc((size_t)MAX(1, vn(v)), sizeof(Fx)); fx_n[v] = fx[v] ? vn(v) : 0;
+}
+static void fav_rebuild(void) {
+    Game *keep = cur_game(V_FAV);
+    int cap = 1;
+    for (int s = 0; s < SYS_COUNT; s++) cap += lib[s].n;
+    free(favv); favv = calloc((size_t)cap, sizeof(Game *)); favv_n = 0; has_cont = 0;
+    if (!favv) return;
+    Game *recent = 0;
+    if (cfg.recent[0]) for (int i = 0; i < lib[cfg.recent_sys].n; i++) if (!strcmp(lib[cfg.recent_sys].g[i].file, cfg.recent)) recent = &lib[cfg.recent_sys].g[i];
+    if (recent) { favv[favv_n++] = recent; has_cont = 1; }
+    int max = 0;
+    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) max = MAX(max, lib[s].g[i].fav);
+    for (int o = 1; o <= max; o++)
+        for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++)
+            if (lib[s].g[i].fav == o && &lib[s].g[i] != recent) favv[favv_n++] = &lib[s].g[i];
+    fx_size(V_FAV);
+    /* the same game stays selected if it's still there */
+    int sel = 0;
+    for (int i = 0; i < favv_n; i++) if (favv[i] == keep) sel = i;
+    row[V_FAV].sel = CLAMP(sel, 0, MAX(0, favv_n - 1));
+}
 
 static Part *spawn_k(int kind, int scr, float x, float y, float vx, float vy, float life, float size, uint32_t c) {
     for (int i = 0; i < ARRAY_LEN(parts); i++) if (parts[i].life <= 0) {
@@ -159,26 +194,23 @@ static void confetti(void) {
     }
 }
 
-static void fx_alloc(void) {
-    for (int s = 0; s < SYS_COUNT; s++) {
-        free(fx[s]); fx[s] = calloc((size_t)MAX(1, lib[s].n), sizeof(Fx)); fx_n[s] = fx[s] ? lib[s].n : 0;
-    }
-}
+static void fx_alloc(void) { for (int v = 0; v < V_COUNT; v++) fx_size(v); }
 static Fx *fx_of(int s, int i) { static Fx none = { { 0, 0 } }; return (i >= 0 && i < fx_n[s]) ? &fx[s][i] : &none; }
 
 static void select_game(int s, int i, int with_sound) {
-    if (!lib[s].n) return;
-    int n = CLAMP(i, 0, lib[s].n - 1);
+    if (!vn(s)) return;
+    int n = CLAMP(i, 0, vn(s) - 1);
     if (n == row[s].sel) return;
     row[s].sel = n;
     sel_t = T;
     notch_pending = 1;
     a_hold = 0;
     /* the tick rises along the list and falls back, as the DSi's does; passing ones (a glide, a flick) are quieter */
-    float pitch = lib[s].n > 1 ? 0.86f + 0.34f * n / (lib[s].n - 1) : 1.0f;
+    float pitch = vn(s) > 1 ? 0.86f + 0.34f * n / (vn(s) - 1) : 1.0f;
     if (with_sound == 1) sfx_pitch(SFX_CURSOR, pitch);
     else if (with_sound == 2) sfx_ex(SFX_CURSOR, pitch * 1.06f, 0.45f);
-    snprintf(cfg.last[s], sizeof cfg.last[s], "%s", lib[s].g[n].file);
+    if (s < V_FAV) snprintf(cfg.last[s], sizeof cfg.last[s], "%s", vg(s, n)->file);
+    else snprintf(cfg.last_fav, sizeof cfg.last_fav, "%s", vg(s, n)->file);
 }
 
 /* the end of the list: the row stretches past it and snaps back, the frame jiggles, a double buzz */
@@ -192,31 +224,38 @@ static void end_bump(int d, float k) {
 
 static void move(int d) {
     Row *r = &row[sys];
-    if (!lib[sys].n) { sfx(SFX_BUMP); return; }
+    if (!vn(sys)) { sfx(SFX_BUMP); return; }
     int n = r->sel + d;
-    if (n < 0 || n >= lib[sys].n) { end_bump(d, 1.0f); return; }
+    if (n < 0 || n >= vn(sys)) { end_bump(d, 1.0f); return; }
     select_game(sys, n, 1);
 }
 
 static void switch_sys(int to) {
     if (to == sys || (sw_t >= 0 && T - sw_t < 0.25)) return;
-    sw_from = sys; sw_dir = to > sys ? 1 : -1; sys = to; sw_t = T;
+    sw_from = sys; sw_dir = tab_pos(to) > tab_pos(sys) ? 1 : -1; sys = to; sw_t = T;
     cfg.sys = sys;
     sfx(SFX_TAB);
     rumble(15, 0.4f);
     glide_dir = 0; coast = 0; a_hold = 0;
     frame_x.x = 128; frame_x.v = 0;
+    frame_w.v = frame_h.v = 0; frame_w.x = 0;          /* (sized at the next step) */
     sel_t = T;
 }
 
 /* art is kept only for the games near the selection (the handheld has 1 GB) */
 static void manage_art(void) {
+    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) lib[s].g[i].keep = 0;
+    for (int v = 0; v < V_COUNT; v++) {
+        int r = v == sys ? 6 : 1;
+        for (int i = MAX(0, row[v].sel - r); i <= MIN(vn(v) - 1, row[v].sel + r); i++) vg(v, i)->keep = 1;
+    }
+    if (lg) lg->keep = 1;
+    if (rg) rg->keep = 1;
+    if (logo_cur) logo_cur->keep = 1;
+    if (logo_prev) logo_prev->keep = 1;
     for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) {
         Game *g = &lib[s].g[i];
-        int near = s == sys && abs(i - row[s].sel) <= 6;
-        if (s != sys && abs(i - row[s].sel) <= 1) near = 1;
-        if (g == lg || g == rg || g == logo_cur || g == logo_prev) near = 1;
-        if (!near && (g->cart || g->label_state || g->logo_state)) { cart_free(g); game_free_art(g); }
+        if (!g->keep && (g->cart || g->label_state || g->logo_state)) { cart_free(g); game_free_art(g); }
     }
 }
 
@@ -295,22 +334,28 @@ static Img *game_logo(Game *g) {
 
 /* ---- the carousel's layout ---- */
 
-typedef struct { float spacing, sel_w, oth_w, cy; } RowGeo;
-static RowGeo geo(int s) {
-    return s == SYS_NDS ? (RowGeo){ 54, 60, 36, 106 } : (RowGeo){ 70, 82, 48, 106 };
-}
+typedef struct { float spacing, cy; } RowGeo;
+static RowGeo geo(int v) { return v == V_NDS ? (RowGeo){ 54, 106 } : v == V_GBA ? (RowGeo){ 70, 106 } : (RowGeo){ 70, 103 }; }
+/* a cartridge's width in the middle and elsewhere: a DS card or a Game Pak (the favourites mix them) */
+static float sel_w_of(int csys) { return csys == SYS_NDS ? 60 : 82; }
+static float oth_w_of(int csys) { return csys == SYS_NDS ? 36 : 48; }
+#define CONT_GAP 18                     /* the favourites: the space after "continue" */
+static float sel_w_now(int v) { Game *g = cur_game(v); return sel_w_of(g ? g->sys : (v == V_GBA ? SYS_GBA : SYS_NDS)); }
 
 typedef struct { float x, y, w, f, d; CartPose pose; } Item;
 
 static void layout(int s, int i, float pos, float dx, Item *it) {
     RowGeo G = geo(s);
-    float cw, ch, cd; cart_size(s, &cw, &ch, &cd);
+    int cs = vg(s, i)->sys;
+    float cw, ch, cd; cart_size(cs, &cw, &ch, &cd);
+    float sw = sel_w_of(cs), ow = oth_w_of(cs);
     float d = i - pos, ad = fabsf(d);
     float f = 1 - smoothstep(0, 1, ad);                   /* 1 when it is the one in the middle */
     it->d = d; it->f = f;
-    it->x = 128 + d * G.spacing + (ad < 1 ? d : SGN(d)) * (G.sel_w - G.oth_w) * 0.5f + dx;
+    it->x = 128 + d * G.spacing + (ad < 1 ? d : SGN(d)) * (sw - ow) * 0.5f + dx;
+    if (s == V_FAV && has_cont) it->x += (i >= 1 ? CONT_GAP : 0) - CONT_GAP * clampf(pos, 0, 1);
     float pop = 1 + 0.06f * clampf(frame_pop.x, -1, 1) * f;
-    it->w = lerpf(G.oth_w, G.sel_w, f) * pop;
+    it->w = lerpf(ow, sw, f) * pop;
     float bob = sinf((float)T * 2.1f + i * 0.9f) * (1.2f + 1.3f * f);
     it->y = G.cy + 8 * (1 - f) - 2 * f + bob;
     CartPose *p = &it->pose;
@@ -485,10 +530,17 @@ static void tint_step(float dt) {
 }
 
 static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
-    Library *L = &lib[sy];
     Row *r = &row[sy];
-    if (!L->n) {
+    int N = vn(sy);
+    if (!N) {
         int a = (int)(alpha * 255);
+        if (sy == V_FAV) {
+            /* nothing yet: a big soft star and how to get one here */
+            star(s, 128 + dx, 92 + sinf((float)T * 1.6f) * 2, 15, 0xf3cf6a, a * 200 / 255);
+            text_center(s, FONT_BD, (int)(128 + dx), 112, 0x7a6532, a, "No favorites yet.");
+            text_center(s, FONT_MD, (int)(128 + dx), 130, C_TEXT_SOFT, a, "Press Y on a game to add it here.");
+            return;
+        }
         window(s, 28 + dx, 66, 200, 76, 0, a);
         char m[300]; snprintf(m, sizeof m, "No %s games yet.", sys_short(sy));
         text_center(s, FONT_BD, (int)(128 + dx), 74, C_TEXT, a, m);
@@ -501,58 +553,95 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
     float pos = r->pos.x;
     /* which items, far ones first */
     int idx[16], n = 0;
-    for (int i = (int)floorf(pos) - 4; i <= (int)ceilf(pos) + 4 && n < 16; i++) if (i >= 0 && i < L->n) idx[n++] = i;
+    for (int i = (int)floorf(pos) - 4; i <= (int)ceilf(pos) + 4 && n < 16; i++) if (i >= 0 && i < N) idx[n++] = i;
     for (int a = 0; a < n; a++) for (int b = a + 1; b < n; b++)
         if (fabsf(idx[a] - pos) < fabsf(idx[b] - pos)) { int t = idx[a]; idx[a] = idx[b]; idx[b] = t; }
     Item it[16];
     float rdx = sy == sys ? clampf(rubber.x, -24, 24) : 0;
     for (int k = 0; k < n; k++) layout(sy, idx[k], pos, dx - rdx, &it[k]);
-    /* the floor shadows */
-    for (int k = 0; k < n; k++) {
-        float lift = (it[k].y - (geo(sy).cy - 8)) ;
-        ellipse_soft(s, it[k].x, 153, it[k].w * 0.46f, 3.5f, 0x000000, (int)(alpha * (50 + lift * 1.5f)));
-    }
-    /* the frame behind the one in the middle */
     RowGeo G = geo(sy);
-    float cw, ch, cd; cart_size(sy, &cw, &ch, &cd);
-    float fw = G.sel_w + 16, fh = G.sel_w * ch / cw + 34;
-    float near = 1 - MIN(1.0f, fabsf(pos - roundf(pos)) * 2.2f);
+    int favs = sy == V_FAV;
+    if (favs) {
+        /* the favourites stand on a shelf; "continue" on its own, a little apart */
+        float x0 = 1e9f;
+        for (int k = 0; k < n; k++) x0 = MIN(x0, it[k].x - it[k].w / 2 - 10);
+        if (has_cont) {
+            Item c0, c1; layout(sy, 0, pos, dx - rdx, &c0);
+            if (N > 1) layout(sy, 1, pos, dx - rdx, &c1);
+            float split = N > 1 ? (c0.x + c0.w / 2 + c1.x - c1.w / 2) / 2 : c0.x + c0.w / 2 + 14;
+            /* "continue" has a little shelf of its own, the favourites a long one */
+            shelf(s, MAX(-8.0f, x0), split - 4, 148, (int)(alpha * 255));
+            if (N > 1) shelf(s, split + 4, 264, 148, (int)(alpha * 255));
+        } else shelf(s, -8, 264, 148, (int)(alpha * 255));
+    }
+    /* the floor shadows (on the shelf: closer, firmer) */
+    for (int k = 0; k < n; k++) {
+        float lift = (it[k].y - (G.cy - 8));
+        ellipse_soft(s, it[k].x, favs ? 149 : 153, it[k].w * 0.46f, favs ? 2.5f : 3.5f, 0x000000, (int)(alpha * (50 + lift * 1.5f)));
+    }
+    /* the frame: where it has travelled to, stretched along its way while it moves, sized for the selected cartridge */
     float fp = 1 + 0.05f * clampf(frame_pop.x, -1, 1);
     float fa = hide ? alpha * alpha * alpha : alpha;            /* launching: the frame goes first */
-    /* the frame: where it has travelled to, stretched along its way while it moves */
     float fx = sy == sys ? frame_x.x : 128, fv = sy == sys ? fabsf(frame_x.v) : 0;
     float stretch = MIN(18.0f, fv * 0.045f);
     float shine = fmodf((float)T + 2.0f, 4.5f) / 0.9f;           /* a light passes over it every 4.5 s */
-    (void)near;
-    sel_frame(s, fx + dx, G.cy + 9, fw * fp + stretch, fh * fp - stretch * 0.25f, "START", tint_now(), shine, (int)(fa * 255));
+    float fw = frame_w.x, fh = frame_h.x;
+    if (sy != sys || fw < 1) {
+        Game *cg = cur_game(sy); int cs = cg ? cg->sys : SYS_NDS;
+        float cw, ch, cd; cart_size(cs, &cw, &ch, &cd);
+        fw = sel_w_of(cs) + 16; fh = sel_w_of(cs) * ch / cw + 34;
+    }
+    const char *label = is_cont(sy, r->sel) ? "CONTINUE" : "START";
+    sel_frame(s, fx + dx, G.cy + 9, fw * fp + stretch, fh * fp - stretch * 0.25f, label, favs ? C_GOLD : tint_now(), shine, (int)(fa * 255));
     for (int k = 0; k < n; k++) {
-        Game *g = &L->g[idx[k]];
+        Game *g = vg(sy, idx[k]);
         if ((hide && g == lg) || (rg && g == rg)) continue;   /* it is flying: drawn by the animation */
         it[k].pose.alpha = alpha * (1 - smoothstep(2.6f, 3.6f, fabsf(it[k].d)));
         if (sy == sys && idx[k] != r->sel) it[k].pose.alpha *= smoothstep(0, 0.3f, (float)(T - reorder_t));
         cart_draw(s, g, &it[k].pose);
+        float cw2, ch2, cd2; cart_size(g->sys, &cw2, &ch2, &cd2);
+        float h = it[k].w * ch2 / cw2;
         /* a favourite: a gold star on its top right corner (popping on, or shrinking away when it stops being one) */
         float pk = g == fav_g ? (float)(T - fav_t) / 0.45f : 2;
         if (g->fav || (pk < 1 && !fav_on)) {
-            float cw2, ch2, cd2; cart_size(sy, &cw2, &ch2, &cd2);
-            float h = it[k].w * ch2 / cw2, r0 = 3.2f + 2.3f * it[k].f;
-            float rr = r0;
+            float r0 = 3.2f + 2.3f * it[k].f, rr = r0;
             if (pk < 1) rr = fav_on ? r0 * (0.2f + 0.8f * ease_out_elastic(pk)) : r0 * (1 - ease_in_cubic(pk));
             star(s, roundf(it[k].x + it[k].w * 0.44f), roundf(it[k].y - h * 0.5f + 1), rr, C_STAR, (int)(it[k].pose.alpha * 255));
         }
+        /* "continue": its balloon over it */
+        /* (selected, the title line says it instead) */
+        if (is_cont(sy, idx[k]) && !hide && it[k].f < 0.95f)
+            balloon(s, it[k].x, it[k].y - h * 0.5f - 3, "Continue", C_GOLD, (int)(it[k].pose.alpha * 255 * (1 - it[k].f)));
     }
 }
 
 static const uint8_t *fav_marks(int s) {
+    if (s >= V_FAV) return 0;
     if (lib[s].n > marks_n) { uint8_t *m = realloc(marks, (size_t)lib[s].n); if (!m) return 0; marks = m; marks_n = lib[s].n; }
-    for (int i = 0; i < lib[s].n; i++) marks[i] = (uint8_t)lib[s].g[i].fav;
+    for (int i = 0; i < lib[s].n; i++) marks[i] = (uint8_t)(lib[s].g[i].fav != 0);
     return marks;
 }
 
-static float parallax(void) { return lib[sys].n ? -row[sys].pos.x * geo(sys).spacing * 0.35f : 0; }
+static float parallax(void) { return vn(sys) ? -row[sys].pos.x * geo(sys).spacing * 0.35f : 0; }
+
+static void draw_tabs(Surf *s, int cur, int y, int pressable) {
+    int touch_at = (tch.down && tch.zone == 1) ? (tch.x0 < 90 ? V_NDS : tch.x0 < 166 ? V_FAV : V_GBA) : -1;
+    float pl = pressable && (touch_at == V_NDS || (in.held & BIT(B_L1))) ? 1 : 0;
+    float pr = pressable && (touch_at == V_GBA || (in.held & BIT(B_R1))) ? 1 : 0;
+    float pm = pressable && touch_at == V_FAV ? 1 : 0;
+    tab(s, 0, -6, y, 74, "NDS", cur == V_NDS, pl, 255);
+    tab(s, 1, 256 - 68, y, 74, "GBA", cur == V_GBA, pr, 255);
+    tab_star(s, 128 - 19, y, 38, cur == V_FAV, pm, 255);
+}
 
 static void draw_bottom(Surf *s, float intro) {
-    bg_bottom(s, T, tint_now(), 72, parallax());
+    float sw0 = sw_t >= 0 ? (float)((T - sw_t) / 0.42) : 2;
+    int fav_bg = sys == V_FAV;
+    if (sw0 < 1 && (sw_from == V_FAV) != (sys == V_FAV)) {
+        /* into or out of the favourites: the paper changes halfway across */
+        fav_bg = ease_in_out(sw0) > 0.5f ? sys == V_FAV : sw_from == V_FAV;
+    }
+    if (fav_bg) bg_favs(s, T, tint_now(), 40, parallax()); else bg_bottom(s, T, tint_now(), 72, parallax());
     float sw = sw_t >= 0 ? (float)((T - sw_t) / 0.42) : 2;
     /* the system's emblem */
     if (sw < 1) {
@@ -565,10 +654,18 @@ static void draw_bottom(Surf *s, float intro) {
     Game *g = cur_game(sys);
     if (g && state != ST_LAUNCH) {
         float k = ease_out_cubic((float)(T - sel_t) / 0.25f);
-        char t[160]; text_fit(FONT_MD, g->title, g->fav ? 222 : 236, t, sizeof t);
-        int tw = text_w(FONT_MD, t), tx = 128 - (tw + (g->fav ? 13 : 0)) / 2, ty = 44 + (int)((1 - k) * 4);
-        if (g->fav) { star(s, tx + 5, ty + 11, 4.2f, C_STAR, (int)(255 * k * intro)); tx += 13; }
-        text(s, FONT_MD, tx, ty, 0x505050, (int)(255 * k * intro), t);
+        int cont = is_cont(sys, row[sys].sel), a = (int)(255 * k * intro), ty = 44 + (int)((1 - k) * 4);
+        const char *pre = cont ? "Continue playing: " : "";
+        int pw = cont ? text_w(FONT_MD, pre) + 9 : 0;
+        char t[160]; text_fit(FONT_MD, g->title, 236 - pw - (g->fav ? 13 : 0), t, sizeof t);
+        int tw = text_w(FONT_MD, t), tx = 128 - (tw + pw + (g->fav ? 13 : 0)) / 2;
+        if (cont) {
+            /* the game played last: a play mark and the words in gold-brown before its title */
+            tri_fill(s, tx, ty + 7, tx, ty + 15, tx + 6, ty + 11, C_GOLD, a);
+            tx = text(s, FONT_MD, tx + 9, ty, 0x8a6418, a, pre);
+        }
+        if (g->fav) { star(s, tx + 5, ty + 11, 4.2f, C_STAR, a); tx += 13; }
+        text(s, FONT_MD, tx, ty, 0x505050, a, t);
     }
 
     /* the cartridges: switching systems slides one row out and the other in */
@@ -580,15 +677,11 @@ static void draw_bottom(Surf *s, float intro) {
     } else draw_row(s, sys, dx_in, intro, state == ST_LAUNCH);
 
     /* the tabs */
-    float pl = ((tch.down && tch.zone == 1 && tch.x0 < 128) || (in.held & BIT(B_L1))) ? 1 : 0;
-    float pr = ((tch.down && tch.zone == 1 && tch.x0 >= 128) || (in.held & BIT(B_R1))) ? 1 : 0;
-    float ty = (1 - ease_out_cubic(intro)) * -22;
-    tab(s, 0, -6, (int)ty, 82, "NDS", sys == SYS_NDS, pl, 255);
-    tab(s, 1, 256 - 76, (int)ty, 82, "GBA", sys == SYS_GBA, pr, 255);
+    draw_tabs(s, sys, (int)((1 - ease_out_cubic(intro)) * -22), 1);
 
     /* the scroll bar */
     float sby = 176 + (1 - ease_out_cubic(intro)) * 20;
-    scroll_bar(s, (int)sby, lib[sys].n, lib[sys].n ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
+    scroll_bar(s, (int)sby, vn(sys), vn(sys) ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
 }
 
 /* ---- the options window ---- */
@@ -621,7 +714,8 @@ static void opt_act(int i, int dir) {
         logo_cur = logo_prev = 0;
         library_scan();
         fx_alloc();
-        for (int s = 0; s < SYS_COUNT; s++) { row[s].sel = CLAMP(row[s].sel, 0, MAX(0, lib[s].n - 1)); row[s].pos.x = row[s].sel; }
+        fav_rebuild();
+        for (int s = 0; s < V_COUNT; s++) { row[s].sel = CLAMP(row[s].sel, 0, MAX(0, vn(s) - 1)); row[s].pos.x = row[s].sel; }
         opt_open = 0; opt_t = T;
         break;
     case OPT_ES: sfx(SFX_SELECT); exit_code = EXIT_TO_ES; break;
@@ -697,23 +791,31 @@ void ui_init(const UiStart *st) {
     char p[400];
     snprintf(p, sizeof p, "%s/assets/boot_logo.png", cfg.home);
     img_load(p, &boot_logo);
-    sys = cfg.sys;
     for (int s = 0; s < SYS_COUNT; s++) {
         row[s].sel = 0;
         for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, cfg.last[s])) row[s].sel = i;
-        row[s].pos.x = row[s].sel;
     }
-    if (!lib[sys].n && lib[!sys].n) sys = !sys;
+    fav_rebuild();
+    for (int i = 0; i < favv_n; i++) if (!strcmp(favv[i]->file, cfg.last_fav)) row[V_FAV].sel = i;
+    if (has_cont) row[V_FAV].sel = 0;                  /* the favourites open on "continue" */
+    for (int v = 0; v < V_COUNT; v++) row[v].pos.x = row[v].sel;
+    /* the favourites are the start; back from a game, the tab it was started from */
+    sys = st->ret_file[0] ? CLAMP(cfg.sys, 0, V_COUNT - 1) : V_FAV;
     state = (st->no_boot || !cfg.boot_splash || st->ret_file[0]) ? ST_MENU : ST_BOOT;
     st_t = 0;
     if (state == ST_MENU) intro_t = 0;
     if (st->ret_file[0]) {
         int s = CLAMP(st->ret_sys, 0, SYS_COUNT - 1);
-        for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, st->ret_file)) { sys = s; row[s].sel = i; row[s].pos.x = i; rg = &lib[s].g[i]; }
+        for (int i = 0; i < vn(sys); i++) {
+            Game *g = vg(sys, i);
+            if (g->sys == s && !strcmp(g->file, st->ret_file)) { row[sys].sel = i; row[sys].pos.x = i; rg = g; r_view = sys; break; }
+        }
         if (rg) { ret_t = 0; intro_t = 0.25; }
     }
     if (state == ST_MENU && !rg) music_play();
     fx_alloc();
+    { Game *cg = cur_game(sys); int cs = cg ? cg->sys : SYS_NDS; float cw, ch, cd; cart_size(cs, &cw, &ch, &cd);
+      frame_w.x = sel_w_of(cs) + 16; frame_h.x = sel_w_of(cs) * ch / cw + 34; }
     last_input = 0;
     /* the snow of December: flakes spread down the top screen to begin with */
     for (int i = 0; i < ARRAY_LEN(flakes); i++) {
@@ -745,12 +847,14 @@ static void snow(Surf *s, float dt) {
 static void start_launch(void) {
     Game *g = cur_game(sys);
     if (!g) { sfx(SFX_ERROR); return; }
-    lg = g; l_sys = sys;
+    lg = g; l_sys = g->sys; l_view = sys;
     state = ST_LAUNCH; st_t = 0;
     sfx(SFX_SELECT);
     rumble(25, 0.6f);
     music_fade(0, 1.2f);
-    snprintf(cfg.last[sys], sizeof cfg.last[sys], "%s", g->file);
+    if (sys < V_FAV) snprintf(cfg.last[sys], sizeof cfg.last[sys], "%s", g->file);
+    else snprintf(cfg.last_fav, sizeof cfg.last_fav, "%s", g->file);
+    cfg.recent_sys = g->sys; snprintf(cfg.recent, sizeof cfg.recent, "%s", g->file);
     cfg.sys = sys;
     state_save();
 }
@@ -774,14 +878,13 @@ static void touch_update(void) {
         else if (y < 18) tch.zone = 1;
         else if (y >= 176) {
             tch.zone = 2;
-            int z, i = scroll_bar_hit(x, 176, lib[sys].n, 5, &z);
+            int z, i = scroll_bar_hit(x, 176, vn(sys), 5, &z);
             if (z) { sb_press = z; sb_press_t = T; move(z); }
             else if (i >= 0) { select_game(sys, i, 1); sfx(SFX_SCROLL); }
         } else {
             tch.zone = 0;
             coast = 0; glide_dir = 0;
-            RowGeo G = geo(sys);
-            if (lib[sys].n && abs(x - 128) < G.sel_w * 0.6f + 6 && y > 60 && y < 160) tch.zone = 5;   /* on the selected one */
+            if (vn(sys) && abs(x - 128) < sel_w_now(sys) * 0.6f + 6 && y > 60 && y < 160) tch.zone = 5;   /* on the selected one */
         }
         if (tch.zone == 3) {
             int i = (int)((y - (OPT_Y + 26)) / OPT_ROW);
@@ -793,23 +896,23 @@ static void touch_update(void) {
     if (down && tch.down) {
         if (abs(x - tch.x0) > 4 || abs(y - tch.y0) > 4) tch.moved = 1;
         if (tch.zone == 5 && tch.moved) tch.zone = 0;   /* it was a drag after all */
-        if (tch.zone == 0 && tch.moved && lib[sys].n) {
+        if (tch.zone == 0 && tch.moved && vn(sys)) {
             RowGeo G = geo(sys);
             float p = tch.pos0 - (x - tch.x0) / G.spacing;
             /* past an end it gives, but less and less */
             if (p < 0) p = -0.5f * (1 - expf(p * 1.5f));
-            else if (p > lib[sys].n - 1) p = lib[sys].n - 1 + 0.5f * (1 - expf(-(p - (lib[sys].n - 1)) * 1.5f));
+            else if (p > vn(sys) - 1) p = vn(sys) - 1 + 0.5f * (1 - expf(-(p - (vn(sys) - 1)) * 1.5f));
             row[sys].pos.x = p;
             row[sys].pos.v = tch.vel;            /* (not stepped while held: what the tilt reads) */
             last_input = T;
             if (((int)(T * 60)) % 3 == 0) spawn_k(P_SPARK, 1, (float)x, (float)y, 0, -8, 0.3f, -1.5f, fav_color(cfg.color));
             double dtt = T - tch.lastt;
             if (dtt > 0.001) { tch.vel = lerpf(tch.vel, (float)(-(x - tch.lastx) / G.spacing / dtt), 0.5f); tch.lastx = (float)x; tch.lastt = T; }
-            int n = CLAMP((int)roundf(row[sys].pos.x), 0, lib[sys].n - 1);
+            int n = CLAMP((int)roundf(row[sys].pos.x), 0, vn(sys) - 1);
             if (n != row[sys].sel) { select_game(sys, n, 1); rumble(7, 0.25f); }   /* a ratchet under the finger */
         }
-        if (tch.zone == 2 && lib[sys].n) {
-            int z, i = scroll_bar_hit(x, 176, lib[sys].n, 5, &z);
+        if (tch.zone == 2 && vn(sys)) {
+            int z, i = scroll_bar_hit(x, 176, vn(sys), 5, &z);
             if (!z && i >= 0 && i != row[sys].sel) { select_game(sys, i, 0); sfx(SFX_SCROLL); }
         }
         tch.x = x; tch.y = y;
@@ -817,20 +920,19 @@ static void touch_update(void) {
     }
     if (!down && tch.down) {
         tch.down = 0;
-        if (tch.zone == 5 && lib[sys].n) { fx_of(sys, row[sys].sel)->wob.v += 9; start_launch(); }
-        else if (tch.zone == 0 && lib[sys].n) {
+        if (tch.zone == 5 && vn(sys)) { fx_of(sys, row[sys].sel)->wob.v += 9; start_launch(); }
+        else if (tch.zone == 0 && vn(sys)) {
             if (tch.moved) {
                 /* a flick carries on by itself (coasting), a slow release settles where it is */
                 float v = clampf(tch.vel, -28, 28);
                 if (fabsf(v) > 2.5f && T - tch.lastt < 0.08) { coast = 1; row[sys].pos.v = v; }
-                else { row[sys].pos.v = 0; select_game(sys, CLAMP((int)roundf(row[sys].pos.x), 0, lib[sys].n - 1), 0); notch_pending = 1; }
+                else { row[sys].pos.v = 0; select_game(sys, CLAMP((int)roundf(row[sys].pos.x), 0, vn(sys) - 1), 0); notch_pending = 1; }
             } else {
                 /* a tap: on the selected cartridge starts it, on another selects it */
-                RowGeo G = geo(sys);
-                if (abs(tch.x - 128) < G.sel_w * 0.6f + 6 && tch.y > 60 && tch.y < 160) { fx_of(sys, row[sys].sel)->wob.v += 9; start_launch(); }
+                if (abs(tch.x - 128) < sel_w_now(sys) * 0.6f + 6 && tch.y > 60 && tch.y < 160) { fx_of(sys, row[sys].sel)->wob.v += 9; start_launch(); }
                 else {
                     float best = 1e9f; int bi = -1;
-                    for (int i = MAX(0, row[sys].sel - 4); i <= MIN(lib[sys].n - 1, row[sys].sel + 4); i++) {
+                    for (int i = MAX(0, row[sys].sel - 4); i <= MIN(vn(sys) - 1, row[sys].sel + 4); i++) {
                         Item it; layout(sys, i, row[sys].pos.x, 0, &it);
                         float d = fabsf(it.x - tch.x);
                         if (d < best && d < it.w * 0.6f + 4) { best = d; bi = i; }
@@ -838,7 +940,7 @@ static void touch_update(void) {
                     if (bi >= 0) { fx_of(sys, bi)->wob.v += 11; select_game(sys, bi, 1); }
                 }
             }
-        } else if (tch.zone == 1 && !tch.moved) switch_sys(tch.x0 < 128 ? SYS_NDS : SYS_GBA);
+        } else if (tch.zone == 1 && !tch.moved) switch_sys(tch.x0 < 90 ? V_NDS : tch.x0 < 166 ? V_FAV : V_GBA);
         else if (tch.zone == 3 && !tch.moved) {
             int i = (int)((tch.y - (OPT_Y + 26)) / OPT_ROW);
             if (i == opt_sel) opt_act(i, 1);
@@ -846,27 +948,36 @@ static void touch_update(void) {
     }
 }
 
-/* Y: a favourite, or not. The star pops on (with a burst of gold), the list sorts the favourites to the front, and the
- * row keeps this game where it is while its neighbours change around it */
+/* Y: a favourite, or not. The star pops on with a burst of gold (or shrinks away). In the favourites tab, taking a
+ * game out of the favourites takes it off the shelf: its neighbours close up. */
 static void toggle_fav(void) {
     Row *r = &row[sys];
-    int old = r->sel, on = !lib[sys].g[old].fav;
-    int n = library_set_fav(sys, old, on);
-    Game *g = &lib[sys].g[n];
-    r->sel = n; r->pos.x += (float)(n - old);
-    snprintf(cfg.last[sys], sizeof cfg.last[sys], "%s", g->file);
-    logo_cur = g; logo_prev = 0;                       /* (the games moved in memory) */
-    for (int i = 0; i < fx_n[sys]; i++) fx[sys][i].wob = (Spring){ 0, 0 };
-    fx_of(sys, n)->wob.v += on ? -10 : 8;
+    Game *g = cur_game(sys);
+    if (!g) return;
+    int on = !g->fav;
+    library_set_fav(g, on);
     fav_g = g; fav_on = on; fav_t = T;
-    if (n != old) reorder_t = T;
     glide_dir = 0; coast = 0; a_hold = 0;
+    int was_cont = is_cont(sys, r->sel);
+    if (sys == V_FAV && !on && !was_cont) {
+        /* off the shelf: a puff where it stood, and the list closes up */
+        for (int i = 0; i < 10; i++) {
+            float a = i * (2 * PI_F / 10), sp = 40 + (hash3(i, (int)(T * 60), 6) % 30);
+            spawn_k(P_SPARK, 1, 128, geo(sys).cy, cosf(a) * sp, sinf(a) * sp, 0.4f, -1.5f, 0xc8c0b0);
+        }
+        int keep = r->sel;
+        fav_rebuild();
+        r->sel = CLAMP(keep < vn(sys) ? keep : keep - 1, 0, MAX(0, vn(sys) - 1));
+        r->pos.x = (float)r->sel; reorder_t = T; notch_pending = 1; sel_t = T;
+    } else fav_rebuild();
+    if (sys == V_FAV) { logo_cur = cur_game(sys); logo_prev = 0; }
+    fx_of(sys, r->sel)->wob.v += on ? -10 : 8;
     if (on) {
         sfx_pitch(SFX_SELECT, 1.25f); rumble(20, 0.5f);
         RowGeo G = geo(sys);
         for (int i = 0; i < 10; i++) {
             float a = i * (2 * PI_F / 10), sp = 50 + (hash3(i, (int)(T * 60), 5) % 40);
-            spawn_k(P_SPARK, 1, 128 + G.sel_w * 0.42f, G.cy - 26, cosf(a) * sp, sinf(a) * sp, 0.5f, -(1.5f + (i & 1)), C_STAR);
+            spawn_k(P_SPARK, 1, 128 + sel_w_now(sys) * 0.42f, G.cy - 26, cosf(a) * sp, sinf(a) * sp, 0.5f, -(1.5f + (i & 1)), C_STAR);
         }
     } else { sfx_pitch(SFX_BACK, 1.1f); rumble(10, 0.3f); }
 }
@@ -884,80 +995,88 @@ static void menu_update(float dt) {
         for (int k = 0; k < 2; k++) {
             int b = k ? B_RIGHT : B_LEFT, dir = k ? 1 : -1;
             if (pressed(b)) { coast = 0; glide_dir = 0; held_since[k] = T; move(dir); }
-            else if ((in.held & BIT(b)) && !glide_dir && T - held_since[k] > 0.32 && lib[sys].n) { glide_dir = dir; glide_speed = 7; }
+            else if ((in.held & BIT(b)) && !glide_dir && T - held_since[k] > 0.32 && vn(sys)) { glide_dir = dir; glide_speed = 7; }
         }
-        if (glide_dir && lib[sys].n) {
+        if (glide_dir && vn(sys)) {
             int b = glide_dir > 0 ? B_RIGHT : B_LEFT;
             Row *r = &row[sys];
             if (!(in.held & BIT(b))) {
                 int n = glide_dir > 0 ? (int)ceilf(r->pos.x - 0.05f) : (int)floorf(r->pos.x + 0.05f);
-                select_game(sys, CLAMP(n, 0, lib[sys].n - 1), 0);
+                select_game(sys, CLAMP(n, 0, vn(sys) - 1), 0);
                 glide_dir = 0;
             } else {
                 glide_speed = MIN(22.0f, glide_speed + 18 * dt);
                 float np = r->pos.x + glide_dir * glide_speed * dt;
-                if (np < 0 || np > lib[sys].n - 1) {
-                    if ((glide_dir < 0 && r->pos.x > 0) || (glide_dir > 0 && r->pos.x < lib[sys].n - 1)) end_bump(glide_dir, 0.6f);
-                    np = clampf(np, 0, (float)(lib[sys].n - 1));
+                if (np < 0 || np > vn(sys) - 1) {
+                    if ((glide_dir < 0 && r->pos.x > 0) || (glide_dir > 0 && r->pos.x < vn(sys) - 1)) end_bump(glide_dir, 0.6f);
+                    np = clampf(np, 0, (float)(vn(sys) - 1));
                     spring_step(&rubber, glide_dir * 8.0f, 300, 22, dt);      /* held against the end: stays stretched */
                 }
                 r->pos.x = np; r->pos.v = glide_dir * glide_speed;
-                int n = CLAMP((int)roundf(np), 0, lib[sys].n - 1);
+                int n = CLAMP((int)roundf(np), 0, vn(sys) - 1);
                 if (n != r->sel) select_game(sys, n, 2);
             }
         }
         if (repeat(B_UP)) move(row[sys].sel > 0 ? -MIN(5, row[sys].sel) : -1);           /* five at a time */
-        if (repeat(B_DOWN)) { int n = lib[sys].n - 1 - row[sys].sel; move(n > 0 ? MIN(5, n) : 1); }
-        if (pressed(B_L1)) { if (sys != SYS_NDS) switch_sys(SYS_NDS); else { bump_dir = -1; bump_t = T; sfx(SFX_BUMP); } }
-        if (pressed(B_R1)) { if (sys != SYS_GBA) switch_sys(SYS_GBA); else { bump_dir = 1; bump_t = T; sfx(SFX_BUMP); } }
-        if (pressed(B_SELECT)) switch_sys(!sys);
+        if (repeat(B_DOWN)) { int n = vn(sys) - 1 - row[sys].sel; move(n > 0 ? MIN(5, n) : 1); }
+        /* L / R: along the tabs, NDS - favourites - GBA; SELECT goes round them */
+        if (pressed(B_L1)) { int p = tab_pos(sys); if (p > 0) switch_sys(TAB_AT[p - 1]); else { bump_dir = -1; bump_t = T; sfx(SFX_BUMP); } }
+        if (pressed(B_R1)) { int p = tab_pos(sys); if (p < 2) switch_sys(TAB_AT[p + 1]); else { bump_dir = 1; bump_t = T; sfx(SFX_BUMP); } }
+        if (pressed(B_SELECT)) switch_sys(TAB_AT[(tab_pos(sys) + 1) % 3]);
         /* A: the cartridge sinks in while it's held; letting go starts it */
-        if (pressed(btn_a()) && lib[sys].n) { a_hold = 1; rumble(10, 0.3f); }
+        if (pressed(btn_a()) && vn(sys)) { a_hold = 1; rumble(10, 0.3f); }
         if (a_hold && !(in.held & BIT(btn_a()))) { a_hold = 0; start_launch(); }
         if (pressed(B_START)) { opt_open = 1; opt_t = T; opt_sel = 0; sfx(SFX_OPEN); }
         if (pressed(B_X)) {           /* the top screen: the logo, or the photo */
             cfg.top_view = !cfg.top_view; view_t = T; state_save();
             sfx_pitch(SFX_TAB, cfg.top_view ? 1.12f : 0.92f); rumble(12, 0.3f);
         }
-        if (pressed(B_Y) && lib[sys].n) toggle_fav();
+        if (pressed(B_Y) && vn(sys)) toggle_fav();
     }
     touch_update();
     /* a flick coasts on, slowing, ticking past each cartridge, then settles on one */
-    if (coast && lib[sys].n) {
+    if (coast && vn(sys)) {
         Row *r = &row[sys];
         r->pos.x += r->pos.v * dt;
         r->pos.v *= expf(-3.0f * dt);
-        if (r->pos.x < 0 || r->pos.x > lib[sys].n - 1) {
+        if (r->pos.x < 0 || r->pos.x > vn(sys) - 1) {
             int d = r->pos.x < 0 ? -1 : 1;
-            r->pos.x = clampf(r->pos.x, 0, (float)(lib[sys].n - 1));
+            r->pos.x = clampf(r->pos.x, 0, (float)(vn(sys) - 1));
             end_bump(d, clampf(fabsf(r->pos.v) / 12, 0.4f, 1.2f));
             r->pos.v = 0; coast = 0;
         } else if (fabsf(r->pos.v) < 2.0f) coast = 0;
-        int n = CLAMP((int)roundf(r->pos.x), 0, lib[sys].n - 1);
+        int n = CLAMP((int)roundf(r->pos.x), 0, vn(sys) - 1);
         if (n != r->sel) { select_game(sys, n, 2); rumble(6, 0.2f); }
     }
     /* the row follows the selection on a quick spring: there in about a fifth of a second, a hint of overshoot */
     int dragging = tch.down && tch.zone == 0 && tch.moved;
-    for (int s = 0; s < SYS_COUNT; s++)
+    for (int s = 0; s < V_COUNT; s++)
         if (!((dragging || glide_dir || coast) && s == sys)) spring_step(&row[s].pos, (float)row[s].sel, 430, 34, dt);
     if (!glide_dir) spring_step(&rubber, 0, 320, 17, dt);
     spring_step(&frame_pop, 0, 300, 12, dt);
+    {
+        Game *cg = cur_game(sys); int cs = cg ? cg->sys : SYS_NDS;
+        float cw, ch, cd; cart_size(cs, &cw, &ch, &cd);
+        float tw = sel_w_of(cs) + 16, th = sel_w_of(cs) * ch / cw + 34;
+        if (frame_w.x < 1) { frame_w.x = tw; frame_h.x = th; }
+        spring_step(&frame_w, tw, 420, 30, dt); spring_step(&frame_h, th, 420, 30, dt);
+    }
     /* the frame goes after the selected cartridge (which the row is bringing to the middle): it lunges toward it and
      * they settle together */
-    if (lib[sys].n) {
+    if (vn(sys)) {
         Item it; layout(sys, row[sys].sel, row[sys].pos.x, 0, &it);
         spring_step(&frame_x, it.x - clampf(rubber.x, -24, 24) * 0.25f, 520, 30, dt);
     }
     spring_step(&sink, (a_hold || (tch.down && tch.zone == 5)) ? 1.0f : 0.0f, 700, 34, dt);
     /* the detent: the selection has locked into the frame */
-    if (notch_pending && !glide_dir && !coast && !dragging && lib[sys].n && fabsf(row[sys].pos.x - row[sys].sel) < 0.06f) {
+    if (notch_pending && !glide_dir && !coast && !dragging && vn(sys) && fabsf(row[sys].pos.x - row[sys].sel) < 0.06f) {
         notch_pending = 0;
         frame_pop.v -= 3.2f;
         sfx_ex(SFX_NOTCH, 1.0f, 0.8f);
         rumble(12, 0.35f);
     }
     /* the jelly settles; the selection's hop when the row arrives */
-    for (int s = 0; s < SYS_COUNT; s++) for (int i = MAX(0, row[s].sel - 5); i <= MIN(fx_n[s] - 1, row[s].sel + 5); i++) spring_step(&fx[s][i].wob, 0, 430, 7.5f, dt);
+    for (int s = 0; s < V_COUNT; s++) for (int i = MAX(0, row[s].sel - 5); i <= MIN(fx_n[s] - 1, row[s].sel + 5); i++) spring_step(&fx[s][i].wob, 0, 430, 7.5f, dt);
     opt_anim = clampf(opt_anim + (opt_open ? dt : -dt) / 0.22f, 0, 1);
 }
 
@@ -983,9 +1102,9 @@ static void sound_parts_slam(void) {
 
 static void launch_draw(Surf *top, Surf *bot, float t) {
     float cw, ch, cd; cart_size(l_sys, &cw, &ch, &cd);
-    RowGeo G = geo(l_sys);
+    RowGeo G = geo(l_view);
     /* bottom: the cartridge squashes, then jumps off the top edge; the others drop away */
-    Item base; layout(l_sys, row[l_sys].sel, row[l_sys].pos.x, 0, &base);
+    Item base; layout(l_view, row[l_view].sel, row[l_view].pos.x, 0, &base);
     if (t < L_UP) {
         CartPose p = base.pose;
         if (t < L_SQUASH) { float k = sinf(t / L_SQUASH * PI_F); p.sy += 3 * k; p.scale *= 1 - 0.06f * k; }
@@ -1112,13 +1231,12 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     if (state == ST_LAUNCH) {
         /* the menu stays, the row fades and drops; the jumping cartridge is drawn over it */
         Surf tmp = *bot;
-        bg_bottom(bot, T, tint_now(), 72, parallax());
+        if (l_view == V_FAV) bg_favs(bot, T, tint_now(), 40, parallax()); else bg_bottom(bot, T, tint_now(), 72, parallax());
         float t = (float)st_t, k = smoothstep(0.08f, 0.5f, t);
-        emblem(bot, l_sys, 128, 22, tint_now(), 255);
-        draw_row(bot, l_sys, 0, 1 - k * 0.85f, 1);
-        tab(bot, 0, -6, 0, 82, "NDS", l_sys == SYS_NDS, 0, 255);
-        tab(bot, 1, 256 - 76, 0, 82, "GBA", l_sys == SYS_GBA, 0, 255);
-        scroll_bar(bot, 176, lib[l_sys].n, row[l_sys].pos.x, 5, 0, fav_marks(l_sys), 255);
+        emblem(bot, l_view, 128, 22, l_view == V_FAV ? C_GOLD : tint_now(), 255);
+        draw_row(bot, l_view, 0, 1 - k * 0.85f, 1);
+        draw_tabs(bot, l_view, 0, 0);
+        scroll_bar(bot, 176, vn(l_view), row[l_view].pos.x, 5, 0, fav_marks(l_view), 255);
         (void)tmp;
         launch_draw(top, bot, t);
         if (t >= L_SLAM && t - dt < L_SLAM) sound_parts_slam();
@@ -1144,7 +1262,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             }
             if (t >= 0.8f && t < 1.25f) {
                 /* into the bottom screen, landing where it belongs */
-                Item it; layout(rg->sys, row[rg->sys].sel, row[rg->sys].pos.x, 0, &it);
+                Item it; layout(r_view, row[r_view].sel, row[r_view].pos.x, 0, &it);
                 float k = ease_out_back(clampf((t - 0.8f) / 0.42f, 0, 1));
                 CartPose q = it.pose; q.sy = lerpf(-40, it.y, k);
                 q.scale *= 1 + (1 - k) * 0.5f; q.yaw += (1 - k) * PI_F * 0.5f;

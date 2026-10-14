@@ -59,15 +59,22 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 |---|---|
 | Left / Right | the previous / next game (hold: a glide that speeds up) |
 | Up / Down | five games back / on |
-| L / R, SELECT | Nintendo DS / Game Boy Advance |
+| L / R, SELECT | the tabs: NDS, ★ Favorites (the middle one, where the menu opens), GBA |
 | A (or tap the selected cartridge) | start it (on release: the cartridge sinks in while held) |
 | X | the top screen: the logo, or the photo view |
-| Y | a favourite, or not: a gold star, and it moves to the front of its list |
+| Y | a favourite, or not (a gold star on the cartridge) |
 | START | Options: colour, clock, sound effects, music, vibration, look for new games, exit to EmulationStation, power off |
 | B | close the options |
 
-Favourites are kept in `/storage/.config/dsixl/favorites.txt` (a line per game: `NDS<tab>file name`), and marked
-in gold on the scroll bar.
+**Favorites** are a tab of their own, the middle one, and the menu opens on it:
+- Its own look in the same DSi style: warm cream paper with little stars, a white lacquered shelf with a gold edge
+  that the cartridges stand on, a gold selection frame, "★ Favorites" pressed in.
+- DS cards and Game Paks side by side, in the order you added them.
+- First, on a little shelf of its own: **Continue**, the game you played last, with a "Continue" balloon over it,
+  "Continue playing: ..." in the title line and CONTINUE in its frame. Coming back from a game lands it there.
+- Y on a favourite there takes it off the shelf (its neighbours close up); in the NDS and GBA tabs Y puts the star
+  on or off, and favourites stay in their alphabetical places, marked in gold on the scroll bar.
+- Kept in `/storage/.config/dsixl/favorites.txt` (a line per game, `NDS<tab>file name`, in the order added).
 
 ## Install (on the handheld, over ssh)
 

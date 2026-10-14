@@ -18,6 +18,15 @@ void bg_top(Surf *s, double t);
 /* white, the stripes and a slow pattern; tint: the selected game's colour mixed in by amt (0..256); par_x: how far the
  * pattern has slid (parallax, pixels) */
 void bg_bottom(Surf *s, double t, uint32_t tint, int amt, float par_x);
+/* the favourites tab's: warm cream stripes, little stars instead of the diamonds */
+void bg_favs(Surf *s, double t, uint32_t tint, int amt, float par_x);
+/* the favourites tab's shelf the cartridges stand on, from x0 to x1 */
+void shelf(Surf *s, float x0, float x1, int y, int alpha);
+/* a DSi speech balloon pointing down at (cx, tip_y), its text inside */
+void balloon(Surf *s, float cx, float tip_y, const char *txt, uint32_t accent_c, int alpha);
+/* the middle tab (the favourites): a star, hanging from the top centre */
+void tab_star(Surf *s, int x, int y, int w, int active, float press, int alpha);
+#define C_GOLD 0xd9a21c
 /* the system's emblem at the top of the bottom screen: its little console and its name, pressed into the plastic */
 void emblem(Surf *s, int sys, float cx, int y, uint32_t tint, int alpha);
 void status_bar(Surf *s, float y_off, int alpha, double t);

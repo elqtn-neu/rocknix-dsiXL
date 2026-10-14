@@ -117,11 +117,7 @@ static void read_gba(Game *g) {
     fclose(f);
 }
 
-static int cmp_game(const void *a, const void *b) {
-    const Game *x = a, *y = b;
-    if (x->fav != y->fav) return y->fav - x->fav;              /* the favourites first */
-    return strcasecmp(x->title, y->title);
-}
+static int cmp_game(const void *a, const void *b) { return strcasecmp(((const Game *)a)->title, ((const Game *)b)->title); }
 
 /* favorites.txt: a line per favourite, "NDS<tab>file name" */
 static void fav_path(char *p, size_t n) { snprintf(p, n, "%s/favorites.txt", cfg.home); }
@@ -129,13 +125,13 @@ static void favs_load(void) {
     char p[400]; fav_path(p, sizeof p);
     FILE *f = fopen(p, "r");
     if (!f) return;
-    char line[600];
+    char line[600]; int order = 0;
     while (fgets(line, sizeof line, f)) {
         line[strcspn(line, "\r\n")] = 0;
         char *tab = strchr(line, '\t'); if (!tab) continue;
         *tab = 0;
         int s = !strcmp(line, "GBA") ? SYS_GBA : SYS_NDS;
-        for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, tab + 1)) lib[s].g[i].fav = 1;
+        for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, tab + 1) && !lib[s].g[i].fav) lib[s].g[i].fav = ++order;
     }
     fclose(f);
 }
@@ -143,19 +139,21 @@ static void favs_save(void) {
     char p[400], tmp[420]; fav_path(p, sizeof p); snprintf(tmp, sizeof tmp, "%s.tmp", p);
     FILE *f = fopen(tmp, "w");
     if (!f) return;
-    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) if (lib[s].g[i].fav) fprintf(f, "%s\t%s\n", sys_short(s), lib[s].g[i].file);
+    /* in the order they were added */
+    int max = 0;
+    for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) max = MAX(max, lib[s].g[i].fav);
+    for (int o = 1; o <= max; o++)
+        for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) if (lib[s].g[i].fav == o) fprintf(f, "%s\t%s\n", sys_short(s), lib[s].g[i].file);
     if (fclose(f) == 0) rename(tmp, p);
 }
 
-int library_set_fav(int sys, int index, int on) {
-    Library *L = &lib[sys];
-    if (index < 0 || index >= L->n) return index;
-    char file[256]; snprintf(file, sizeof file, "%s", L->g[index].file);
-    L->g[index].fav = on;
+void library_set_fav(Game *g, int on) {
+    if (on && !g->fav) {
+        int max = 0;
+        for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) max = MAX(max, lib[s].g[i].fav);
+        g->fav = max + 1;
+    } else if (!on) g->fav = 0;
     favs_save();
-    if (L->n > 1) qsort(L->g, (size_t)L->n, sizeof(Game), cmp_game);
-    for (int i = 0; i < L->n; i++) if (!strcmp(L->g[i].file, file)) return i;
-    return index;
 }
 
 static void scan_dir(int sys, const char *dir) {
@@ -192,8 +190,8 @@ void library_scan(void) {
         free(lib[s].g); lib[s].g = 0; lib[s].n = 0;
         scan_dir(s, s == SYS_NDS ? cfg.dir_nds : cfg.dir_gba);
     }
-    favs_load();
     for (int s = 0; s < SYS_COUNT; s++) if (lib[s].n > 1) qsort(lib[s].g, (size_t)lib[s].n, sizeof(Game), cmp_game);
+    favs_load();
 }
 
 static int try_ext(const char *stem, char *out, int sz) {

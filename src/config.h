@@ -14,7 +14,9 @@ typedef struct {
     char dir_nds[256], dir_gba[256], media[256], sounds[256];
     char home[256], cache[300];
     /* state */
-    int sys;                        /* 0 NDS, 1 GBA */
+    int sys;                        /* the tab: 0 NDS, 1 GBA, 2 favourites */
+    char last_fav[256];             /* the selected game in the favourites tab */
+    int recent_sys; char recent[256];   /* the game played last (the favourites tab's "continue"); recent "" none */
     int top_view;                   /* the top screen: 0 the logo, 1 the photo (X) */
     char last[2][256];              /* the selected game per system (file name) */
 } Config;
