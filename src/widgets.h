@@ -25,7 +25,7 @@ void status_bar(Surf *s, float y_off, int alpha, double t);
 void tab(Surf *s, int side, int x, int y, int w, const char *label, int active, float press, int alpha);
 void btn_glyph(Surf *s, int x, int y, const char *letter, uint32_t bg, int alpha);
 /* the blue (accent) frame around the selected item, its label underneath ("START") */
-void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, uint32_t base, int alpha);
+void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, uint32_t base, float shine, int alpha);
 /* the scroll bar along the bottom: count items, sel, view = items visible; press -1 left, 1 right */
 void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, int alpha);
 int scroll_bar_hit(int x, int y0, int count, float view, int *zone);   /* the item a touch at x points at */

@@ -57,7 +57,8 @@ static int glide_dir; static float glide_speed; static double held_since[2];
 static int coast;
 static Spring rubber;                   /* the row pulled past an end, in pixels */
 static int notch_pending;
-static int a_hold; static Spring sink;  /* A (or a finger) held on the selected cartridge: it sinks in */
+static int a_hold; static Spring sink;
+static Spring frame_x = { 128, 0 };     /* the selection frame travels with the cartridges, a little behind them */  /* A (or a finger) held on the selected cartridge: it sinks in */
 
 /* the top screen's logo: the current one and the one leaving */
 static Game *logo_cur, *logo_prev; static double logo_t = -10;
@@ -200,6 +201,7 @@ static void switch_sys(int to) {
     sfx(SFX_TAB);
     rumble(15, 0.4f);
     glide_dir = 0; coast = 0; a_hold = 0;
+    frame_x.x = 128; frame_x.v = 0;
     sel_t = T;
 }
 
@@ -347,12 +349,55 @@ static void layout(int s, int i, float pos, float dx, Item *it) {
 
 /* ---- drawing: the top screen ---- */
 
+/* the photo: the game's title screen, printed with a white border like the DSi's top-screen photos, a little
+ * crooked (each game its own way), made once per game */
+static Img *game_photo(Game *g) {
+    if (!g) return 0;
+    if (!g->shot_state) game_load_art(g);
+    if (g->shot_state < 1) return 0;
+    if (g->photo.px) return &g->photo;
+    /* a title screen alone (it is the logo) is shown bigger than a screenshot with a logo over it */
+    int pw = g->shot_state == 2 ? 196 : 160, ph = MAX(1, g->shot.h * pw / g->shot.w), B = 5;
+    Img small; img_resize_area(&g->shot, &small, pw, ph);
+    Img framed;
+    if (!small.px || img_alloc(&framed, pw + 2 * B, ph + 2 * B)) { img_free(&small); return 0; }
+    Surf fs = { framed.w, framed.h, framed.w, framed.px, 0, 0, framed.w, framed.h };
+    rect_vgrad(&fs, 0, 0, framed.w, framed.h, 0xffffff, 0xf2f2f2, 255);
+    rectf(&fs, 0, 0, framed.w, 1, 0xdedede); rectf(&fs, 0, framed.h - 1, framed.w, 1, 0xc8c8c8);
+    rectf(&fs, 0, 0, 1, framed.h, 0xd6d6d6); rectf(&fs, framed.w - 1, 0, 1, framed.h, 0xd0d0d0);
+    blit(&fs, &small, B, B, 255);
+    rect_blend(&fs, B, B, pw, 1, 0x000000, 40); rect_blend(&fs, B, B, 1, ph, 0x000000, 30);   /* the print's edge */
+    for (int i = 0; i < framed.w * framed.h; i++) framed.px[i] |= 0xff000000u;
+    uint32_t h = hash_str(g->file);
+    float ang = ((h & 1) ? 1 : -1) * (1.6f + (h >> 1) % 10 * 0.12f) * PI_F / 180;
+    img_rotate(&framed, ang, &g->photo);
+    img_free(&small); img_free(&framed);
+    return g->photo.px ? &g->photo : 0;
+}
+
 static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy) {
-    Img *lo = game_logo(g);
-    if (!lo || alpha <= 0.01f) return;
+    if (!g || alpha <= 0.01f) return;
+    Img *ph = game_photo(g);
+    Img *lo = ph && g->shot_state == 2 ? &g->shot : game_logo(g);
+    if (!lo) return;
     float bob = sinf((float)T * 1.6f) * 3.0f;
-    float w = lo->w * scale, h = lo->h * scale;
     float cx = 128, cy = 96 + dy + bob;
+    if (ph) {
+        /* the photo, floating gently on its own beat; the logo over its lower edge, floating on another */
+        float pb = sinf((float)T * 1.15f + 1.0f) * 1.5f;
+        float pw = ph->w * scale, phh = ph->h * scale;
+        int alone = g->shot_state == 2;               /* the title screen: the logo is in it */
+        float px = 128 - pw / 2, py = (alone ? 100 : 80) + dy * 0.6f + pb - phh / 2;
+        int pst = fabsf(scale - 1) < 0.01f;
+        if (pst) { px = roundf(px); py = roundf(py); }
+        blit_tint(s, ph, px + 2, py + 3, pw, phh, 0x000000, (int)(alpha * 55));
+        blit_scaled(s, ph, px, py, pw, phh, (int)(alpha * 255), !pst);
+        if (alone) return;
+        float k = MIN(1.0f, MIN(200.0f / lo->w, 74.0f / lo->h));
+        scale *= k;
+        cy = 146 + dy + bob;
+    }
+    float w = lo->w * scale, h = lo->h * scale;
     int a = (int)(alpha * 255);
     /* the glow behind (drawn once per size) and the shadow on the floor (smaller and fainter while it rises) */
     static Img glow; static int gw, gh;
@@ -369,12 +414,13 @@ static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy) {
             (void)gs;
         }
     }
-    blit(s, &glow, (int)roundf(cx) - gw, (int)roundf(cy) - gh, a);
+    if (!ph) blit(s, &glow, (int)roundf(cx) - gw, (int)roundf(cy) - gh, a);   /* (over a photo it would wash it out) */
     float rise = (bob + 3) / 6;
-    ellipse_soft(s, cx, 170, (w * 0.40f) * (1.05f - rise * 0.12f), 4.5f, 0x000000, (int)(a * (0.22f - rise * 0.06f)));
+    if (!ph) ellipse_soft(s, cx, 170, (w * 0.40f) * (1.05f - rise * 0.12f), 4.5f, 0x000000, (int)(a * (0.22f - rise * 0.06f)));
     float x = cx - w / 2, y = cy - h / 2;
     int still = fabsf(scale - 1) < 0.01f;
     if (still) { x = roundf(x); y = roundf(y); }
+    if (ph) still = 0;               /* a logo fitted under the photo is drawn smoothly scaled */
     blit_tint(s, lo, x + 2, y + 3, w, h, 0x000000, a * 38 / 255);
     blit_scaled(s, lo, x, y, w, h, a, !still);
     /* a glint every 4 s */
@@ -392,24 +438,33 @@ static void draw_logo(Surf *s, Game *g, float alpha, float scale, float dy) {
     }
 }
 
-static void draw_slot(Surf *s, float rise, int led) {
-    /* the cartridge slot, risen from the bottom edge: the DSi's dark grey body with its opening */
-    float y = 192 - rise * 30;
+/* the cartridge slot: a thin strip of the console that rises from the bottom edge, seen a little from above: its top
+ * face with the slit in it, and its front face with the power lamp. A cartridge is drawn between the two, cut off at
+ * the slit, so it goes into the slit and not behind the strip. */
+#define SLOT_H 14
+static float slot_top(float rise) { return 192 - rise * SLOT_H; }
+static float slot_open_y(float rise) { return slot_top(rise) + 3; }   /* the slit: below it, the cartridge is inside */
+static void draw_slot_back(Surf *s, float rise, float slit_w) {
     if (rise <= 0.001f) return;
-    rect_vgrad(s, 0, (int)y, 256, 40, 0x5d6066, 0x34363a, 255);
-    hline(s, 0, 255, (int)y, 0x8a8e96, 255);
-    hline(s, 0, 255, (int)y + 1, 0x777b82, 255);
-    /* the opening */
-    rrect(s, 128 - 66, y + 7, 132, 9, 3, 0x0d0e10, 255);
-    rrect_line(s, 128 - 66, y + 7, 132, 9, 3, 1, 0x1e2024, 255);
-    hline(s, 128 - 62, 128 + 61, (int)y + 15, 0x6c7078, 180);
-    /* the power lamp */
-    uint32_t lc = led == 2 ? 0x46f04a : led == 1 ? 0x2fae32 : 0x2a3a2a;
-    disc(s, 230, y + 11, 2.5f, lc, 255);
-    if (led == 2) ellipse_soft(s, 230, y + 11, 7, 7, 0x46f04a, 90);
-    text(s, FONT_SM, 18, (int)y + 4, 0x8e9299, 255, "DSi XL");
+    int y = (int)roundf(slot_top(rise));
+    rect_vgrad(s, 0, y, 256, 5, 0xa3a7ae, 0x868a92, 255);           /* the top face */
+    hline(s, 0, 255, y, 0xc4c8ce, 255);
+    float sw = slit_w;
+    rrect(s, 128 - sw / 2, y + 1, sw, 3.5f, 1.5f, 0x0c0d0f, 255);    /* the slit */
+    hline(s, (int)(128 - sw / 2) + 2, (int)(128 + sw / 2) - 3, y + 1, 0x2a2c30, 255);
 }
-static float slot_open_y(float rise) { return 192 - rise * 30 + 7; }
+static void draw_slot_front(Surf *s, float rise, float slit_w, int led) {
+    if (rise <= 0.001f) return;
+    int y = (int)roundf(slot_top(rise));
+    /* the slit's near lip, over the cartridge: it is in the slot */
+    hline(s, (int)(128 - slit_w / 2), (int)(128 + slit_w / 2), y + 4, 0x8e929a, 255);
+    rect_vgrad(s, 0, y + 5, 256, 192 - (y + 5) + 8, 0x5e6168, 0x3a3c41, 255);   /* the front face */
+    hline(s, 0, 255, y + 5, 0x70747b, 255);
+    uint32_t lc = led == 2 ? 0x46f04a : led == 1 ? 0x2fae32 : 0x2a3a2a;
+    disc(s, 232, y + 9.5f, 1.8f, lc, 255);
+    if (led == 2) ellipse_soft(s, 232, y + 9.5f, 6, 5, 0x46f04a, 90);
+    text(s, FONT_SM, 14, y + 1, 0x9da1a8, 255, "DSi XL");
+}
 
 /* ---- drawing: the bottom screen ---- */
 
@@ -446,8 +501,8 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
     for (int a = 0; a < n; a++) for (int b = a + 1; b < n; b++)
         if (fabsf(idx[a] - pos) < fabsf(idx[b] - pos)) { int t = idx[a]; idx[a] = idx[b]; idx[b] = t; }
     Item it[16];
-    if (sy == sys) dx -= clampf(rubber.x, -24, 24);
-    for (int k = 0; k < n; k++) layout(sy, idx[k], pos, dx, &it[k]);
+    float rdx = sy == sys ? clampf(rubber.x, -24, 24) : 0;
+    for (int k = 0; k < n; k++) layout(sy, idx[k], pos, dx - rdx, &it[k]);
     /* the floor shadows */
     for (int k = 0; k < n; k++) {
         float lift = (it[k].y - (geo(sy).cy - 8)) ;
@@ -460,8 +515,12 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
     float near = 1 - MIN(1.0f, fabsf(pos - roundf(pos)) * 2.2f);
     float fp = 1 + 0.05f * clampf(frame_pop.x, -1, 1);
     float fa = hide ? alpha * alpha * alpha : alpha;            /* launching: the frame goes first */
-    float fjig = sy == sys ? clampf(rubber.x, -24, 24) * 0.75f : 0;     /* the frame stays, the row is pulled */
-    sel_frame(s, 128 + dx + fjig, G.cy + 9, fw * fp, fh * fp, "START", tint_now(), (int)(fa * 255 * (0.55f + 0.45f * near)));
+    /* the frame: where it has travelled to, stretched along its way while it moves */
+    float fx = sy == sys ? frame_x.x : 128, fv = sy == sys ? fabsf(frame_x.v) : 0;
+    float stretch = MIN(18.0f, fv * 0.045f);
+    float shine = fmodf((float)T + 2.0f, 4.5f) / 0.9f;           /* a light passes over it every 4.5 s */
+    (void)near;
+    sel_frame(s, fx + dx, G.cy + 9, fw * fp + stretch, fh * fp - stretch * 0.25f, "START", tint_now(), shine, (int)(fa * 255));
     for (int k = 0; k < n; k++) {
         Game *g = &L->g[idx[k]];
         if ((hide && g == lg) || (rg && g == rg)) continue;   /* it is flying: drawn by the animation */
@@ -831,6 +890,12 @@ static void menu_update(float dt) {
         if (!((dragging || glide_dir || coast) && s == sys)) spring_step(&row[s].pos, (float)row[s].sel, 430, 34, dt);
     if (!glide_dir) spring_step(&rubber, 0, 320, 17, dt);
     spring_step(&frame_pop, 0, 300, 12, dt);
+    /* the frame goes after the selected cartridge (which the row is bringing to the middle): it lunges toward it and
+     * they settle together */
+    if (lib[sys].n) {
+        Item it; layout(sys, row[sys].sel, row[sys].pos.x, 0, &it);
+        spring_step(&frame_x, it.x - clampf(rubber.x, -24, 24) * 0.25f, 520, 30, dt);
+    }
     spring_step(&sink, (a_hold || (tch.down && tch.zone == 5)) ? 1.0f : 0.0f, 700, 34, dt);
     /* the detent: the selection has locked into the frame */
     if (notch_pending && !glide_dir && !coast && !dragging && lib[sys].n && fabsf(row[sys].pos.x - row[sys].sel) < 0.06f) {
@@ -850,7 +915,7 @@ static void sound_parts_slam(void) {
     shake_t = T; shake_amp = 5;
     for (int i = 0; i < 26; i++) {
         float side = (i & 1) ? 1 : -1, sp = 30 + (hash3(i, 1, 7) % 70);
-        spawn(0, 128 + side * (20 + (hash3(i, 2, 7) % 40)), slot_open_y(1) + 2, side * sp, -(15 + (float)(hash3(i, 3, 7) % 40)), 0.5f + (hash3(i, 4, 7) % 40) / 100.0f, 3 + (hash3(i, 5, 7) % 4), 0x8a8478);
+        spawn(0, 128 + side * (20 + (hash3(i, 2, 7) % 40)), slot_open_y(1) - 1, side * sp, -(15 + (float)(hash3(i, 3, 7) % 40)), 0.5f + (hash3(i, 4, 7) % 40) / 100.0f, 3 + (hash3(i, 5, 7) % 4), 0x8a8478);
     }
     for (int i = 0; i < 8; i++) spawn(0, 128 + ((int)(hash3(i, 9, 3) % 120) - 60), slot_open_y(1) - 6 - (hash3(i, 8, 3) % 30), 0, -10, 0.5f, -3, 0xffffff);
 }
@@ -889,14 +954,13 @@ static void launch_draw(Surf *top, Surf *bot, float t) {
     }
     /* top: the logo goes, the slot rises, the cartridge comes up from below and slams down into it */
     float rise = ease_out_back(clampf((t - 0.15f) / 0.3f, 0, 1));
-    float home_y = slot_open_y(1) - ch * 0.5f * (G.sel_w * 1.9f / cw) + 10;   /* its lower part in the slot */
     float sc = (l_sys == SYS_NDS ? 92.0f : 128.0f) / cw;
+    (void)G;
     float apex_y = 66;
     if (t >= L_UP - 0.05f) {
         CartPose p; memset(&p, 0, sizeof p);
         p.sx = 128; p.alpha = 1; p.bright = 1.05f; p.scale = sc;
-        float home = slot_open_y(1) + 14 - ch * sc * 0.5f;      /* most of it still showing above the slot */
-        (void)home_y;
+        float home = slot_open_y(1) + ch * sc * 0.42f - ch * sc * 0.5f;   /* its lower part (42%) in the slot */
         if (t < L_APEX) {
             float k = ease_out_cubic((t - (L_UP - 0.05f)) / (L_APEX - L_UP + 0.05f));
             p.sy = lerpf(192 + ch * sc * 0.6f, apex_y, k);
@@ -921,11 +985,12 @@ static void launch_draw(Surf *top, Surf *bot, float t) {
             p.sy = home - (k < 1 ? sinf(k * PI_F) * 3 * (1 - k) : 0);
             p.scale = sc * (k < 1 ? 1 + 0.03f * (1 - k) * cosf(k * PI_F * 3) : 1);
         }
-        /* everything below the slot's opening is inside the console */
-        Surf clip = *top; surf_clip(&clip, 0, 0, 256, (int)slot_open_y(rise) + 3);
+        /* the slot's top face, the cartridge (cut at the slit: below it, it's inside), the slot's front */
+        draw_slot_back(top, rise, cw * sc + 8);
+        Surf clip = *top; surf_clip(&clip, 0, 0, 256, rise > 0.001f ? (int)roundf(slot_open_y(rise)) : 192);
         cart_draw(&clip, lg, &p);
-    }
-    draw_slot(top, rise, t >= L_SLAM ? ((int)((t - L_SLAM) * 8) % 2 ? 2 : 1) : 0);
+    } else draw_slot_back(top, rise, cw * sc + 8);
+    draw_slot_front(top, rise, cw * sc + 8, t >= L_SLAM ? ((int)((t - L_SLAM) * 8) % 2 ? 2 : 1) : 0);
 }
 
 int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
@@ -1007,16 +1072,17 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         if (rg && ret_t >= 0) {
             ret_t += dt;
             float t = (float)ret_t, cw, ch, cd; cart_size(rg->sys, &cw, &ch, &cd);
-            float sc = (rg->sys == SYS_NDS ? 92.0f : 128.0f) / cw, home = slot_open_y(1) + 14 - ch * sc * 0.5f;
+            float sc = (rg->sys == SYS_NDS ? 92.0f : 128.0f) / cw, home = slot_open_y(1) + ch * sc * 0.42f - ch * sc * 0.5f;
             float rise = 1 - ease_in_cubic(clampf((t - 0.55f) / 0.3f, 0, 1));
             CartPose p; memset(&p, 0, sizeof p); p.sx = 128; p.alpha = 1; p.bright = 1.05f; p.scale = sc;
             if (t < 0.25f) p.sy = home;
             else if (t < 0.55f) { float k = ease_out_cubic((t - 0.25f) / 0.3f); p.sy = lerpf(home, 70, k); if (t - dt < 0.25f) sfx(SFX_WHOOSH); }
             else { float k = ease_in_cubic((t - 0.55f) / 0.28f); p.sy = lerpf(70, 192 + ch * sc, k); p.yaw = k * PI_F * 0.5f; }
             if (t < 0.85f) {
-                Surf clip = *top; surf_clip(&clip, 0, 0, 256, (int)slot_open_y(rise) + 3);
+                draw_slot_back(top, rise, cw * sc + 8);
+                Surf clip = *top; surf_clip(&clip, 0, 0, 256, rise > 0.001f ? (int)roundf(slot_open_y(rise)) : 192);
                 cart_draw(&clip, rg, &p);
-                draw_slot(top, rise, t < 0.25f ? 1 : 0);
+                draw_slot_front(top, rise, cw * sc + 8, t < 0.25f ? 1 : 0);
             }
             if (t >= 0.8f && t < 1.25f) {
                 /* into the bottom screen, landing where it belongs */

@@ -17,6 +17,8 @@ typedef struct {
     /* art, loaded on demand: state 0 not tried, 1 there, -1 none */
     Img label; int label_state;     /* 1 a label scan, 2 box art (cropped to fit), 3 a scan of the whole cartridge */
     Img logo; int logo_state;       /* the title logo for the top screen */
+    Img shot; int shot_state;       /* the top screen's photo: 1 a screenshot, 2 the title screen; -1 none */
+    Img photo;                      /* ui.c: the photo, framed and tilted, ready to draw */
     void *cart;                     /* cart.c's texture for this game */
     uint32_t tint; int tint_state;  /* the main colour of its art (the bottom screen takes it on); 1 there, -1 none */
 } Game;

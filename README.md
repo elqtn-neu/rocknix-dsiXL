@@ -18,20 +18,21 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 - **Boot.** Black to white, the DS logo and its chime on the top screen, the health and safety screen on the
   bottom, "Touch the Touch Screen to continue." pulsing. A touch or any button, then the menu slides in from white.
 - **Top screen.**
-  - The DSi's status bar: speaker, your name in your colour, the date, the time with its blinking colon, the
-    battery.
-  - The selected game's **title logo**, floating, with a soft glow, a shadow on the floor, a glint and sparkles.
-    Nothing else.
+  - The DSi's status bar: the speaker, the date, the time with its blinking colon, the battery.
+  - A **photo** of the selected game in a white frame, a little crooked, as the DSi showed your photos. A game
+    with a logo gets a screenshot with its **logo** floating over it (glint and sparkles). A game without one (most
+    DS games) gets its title screen alone, which carries the logo. With no art at all: the title, set as a logo.
 - **Bottom screen.**
   - White with the DSi's stripes and a slow pattern.
   - **3D cartridges** in a row: a DS game card or a GBA Game Pak, carrying the game's art.
-  - The selected cartridge pops out in full colour in the DSi's selection frame, swaying, with a glossy streak.
-    The others float, smaller and greyer.
+  - The selected cartridge pops out in full colour in the DSi's selection frame. The frame travels with the
+    cartridges (it lunges for the next one and they settle together), and a light passes over it now and then. The
+    others float, smaller and greyer.
   - **L NDS / GBA R** tabs. The system's name as a watermark ("Nintendo DS", like "Nintendo DSi Menu").
   - The DSi's scroll bar along the bottom.
 - **Starting a game.** The cartridge squashes, jumps off the bottom screen and comes up into the top one with a
   full turn. It hangs, then **slams down into the card slot** that has risen at the bottom of the top screen:
-  thud, shake, dust, the power lamp. Then white, as the DSi does, and the game.
+  the cartridge goes into the slot's slit with a thud, shake, dust, the power lamp. Then white, as the DSi does, and the game.
 - **Back from a game.** The cartridge pops out of the slot, drops through to the bottom screen and lands back in
   its place.
 - **Tactile navigation.** A press lands in about a tenth of a second, and the selection locks into its frame like a
@@ -100,9 +101,10 @@ No account and no key needed:
 |---|---|---|
 | Box art (on the cartridge's label) | GameTDB covers by the game code in the ROM, else libretro-thumbnails | libretro-thumbnails |
 | Cartridge scans (the whole cartridge face) | GameTDB, where it has one | – |
-| Title logo (top screen) | none free: the menu sets the title as a logo | libretro-thumbnails (Named_Logos) |
+| Title logo (top screen) | none free: the title screen carries it | libretro-thumbnails (Named_Logos) |
+| Title screen and screenshot (the top screen's photo) | libretro-thumbnails | libretro-thumbnails |
 
-Your own art always wins. Drop files in `/storage/roms/dsixl/media/<nds|gba>/<box|cart|label|logo>/<ROM name
+Your own art always wins. Drop files in `/storage/roms/dsixl/media/<nds|gba>/<box|cart|label|logo|title|snap>/<ROM name
 without extension>.png` (or `.jpg`): a `cart` is a scan of the real cartridge (used as its whole face), a `label`
 fills the label area, a `box` is cropped to the label (its spine strip, rating and publisher strip cut off), a
 `logo` should be a transparent PNG.
@@ -117,7 +119,7 @@ Put the DSi's sounds (your own copies) in `/storage/roms/dsixl/sounds`: `boot.wa
 
 ## Customising
 
-- `config.ini`: your name (`user`), your colour (`color`, the DS's 16 favourite colours: the selection frame, the
+- `config.ini`: your colour (`color`, the DS's 16 favourite colours: the selection frame, the
   tabs, the scroll bar, the title logos follow it), 12/24-hour clock, the boot screen (`boot_splash`, and
   `boot_wait = n` to continue by itself after n seconds), the ROM, art and sound folders.
 - `assets/boot_logo.png`: the boot logo is an approximation drawn by `tools/gen_assets.py`. Replace it with your

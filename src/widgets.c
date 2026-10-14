@@ -112,10 +112,10 @@ void status_bar(Surf *s, float y_off, int alpha, double t) {
     int y = (int)roundf(y_off);
     Accent a = accent();
     speaker_icon(s, 4, y + 3, C_TEXT, alpha);
-    int ux = text(s, FONT_MD, 26, y - 3, col_mix(a.base, 0x303030, 60), alpha, cfg.user);
+    (void)a;
     if (is_birthday()) {
-        /* a birthday cake after the name, its candle flickering */
-        int cx = ux + 4, cy = y + 2;
+        /* a birthday cake after the speaker, its candle flickering */
+        int cx = 22, cy = y + 2;
         rect_blend(s, cx, cy + 5, 11, 6, 0xf4c6d6, alpha); rect_blend(s, cx, cy + 5, 11, 2, 0xffffff, alpha);
         rect_blend(s, cx - 1, cy + 11, 13, 1, C_TEXT, alpha);
         for (int i = 0; i < 4; i++) pblend(s, cx + 1 + i * 3, cy + 7, 0xe8476a, alpha);
@@ -161,7 +161,21 @@ void tab(Surf *s, int side, int x, int y, int w, const char *label, int active, 
     if (active) rect_blend(s, x + 6, (int)py + h - 2, w - 12, 2, a.base, alpha * 200 / 255);
 }
 
-void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, uint32_t base, int alpha) {
+/* the light that passes over the frame now and then: shine 0..1 across it, outside that none */
+static void frame_shine(Surf *s, float x, float y, float w, float h, float shine, int alpha) {
+    if (shine <= 0 || shine >= 1) return;
+    float pos = -h * 0.6f + shine * (w + h * 1.2f);
+    int x0 = MAX((int)x, s->cx0), x1 = MIN((int)(x + w), s->cx1), y0 = MAX((int)y, s->cy0), y1 = MIN((int)(y + h), s->cy1);
+    for (int py = y0; py < y1; py++) for (int px = x0; px < x1; px++) {
+        float d = (px - x) + (py - y) * 0.6f - pos;
+        if (d < -9 || d > 9) continue;
+        float cov = rrect_cov(px + 0.5f, py + 0.5f, x + 1, y + 1, w - 2, h - 2, 6);
+        if (cov <= 0) continue;
+        pblend(s, px, py, 0xffffff, (int)(alpha * cov * 0.45f * expf(-d * d / 14.0f)));
+    }
+}
+
+void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label, uint32_t base, float shine, int alpha) {
     Accent a = accent_of(base);
     float x = cx - w / 2, y = cy - h / 2;
     rrect(s, x + 1, y + 2, w, h, 7, 0x000000, alpha * 40 / 255);                          /* shadow */
@@ -169,6 +183,7 @@ void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label,
     rrect_vgrad(s, x + 1, y + 1, w - 2, h - 2, 6, a.light, col_mix(a.base, 0x000000, 30), alpha);
     rrect_vgrad(s, x + 2, y + 2, w - 4, h * 0.42f, 5, 0xffffff, 0xffffff, alpha * 55 / 255); /* the gloss on the top half */
     rrect_line(s, x + 1, y + 1, w - 2, h - 2, 6, 1, 0xffffff, alpha * 70 / 255);
+    frame_shine(s, x, y, w, h, shine, alpha);
     if (label && *label) {
         int ty = (int)(y + h - 17);
         text_center(s, FONT_BD, (int)cx + 1, ty + 1, a.dark, alpha * 200 / 255, label);

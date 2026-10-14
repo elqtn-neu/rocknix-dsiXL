@@ -51,6 +51,7 @@ void rect_vgrad(Surf *s, int x, int y, int w, int h, uint32_t top, uint32_t bot,
 void hline(Surf *s, int x0, int x1, int y, uint32_t c, int a);
 void vline(Surf *s, int x, int y0, int y1, uint32_t c, int a);
 /* rounded rectangles with antialiased corners (float coordinates: they move by sub-pixels and stay smooth) */
+float rrect_cov(float px, float py, float x, float y, float w, float h, float r);   /* coverage of a pixel centre */
 void rrect(Surf *s, float x, float y, float w, float h, float r, uint32_t c, int a);
 void rrect_vgrad(Surf *s, float x, float y, float w, float h, float r, uint32_t top, uint32_t bot, int a);
 void rrect_line(Surf *s, float x, float y, float w, float h, float r, float t, uint32_t c, int a);   /* t: thickness */
@@ -70,4 +71,5 @@ void blit_tint(Surf *s, const Img *im, float dx, float dy, float dw, float dh, u
 void img_fill(Img *im, uint32_t argb);
 void img_draw(Img *dst, const Img *src, int x, int y);                         /* alpha-over */
 void img_resize_area(const Img *src, Img *dst, int w, int h);                  /* box-filtered downscale */
+void img_rotate(const Img *src, float angle, Img *dst);                        /* radians; smooth, soft edges */
 void img_resize_cover(const Img *src, Img *dst, int w, int h, float focus_y);  /* fill w x h, cropping the excess */

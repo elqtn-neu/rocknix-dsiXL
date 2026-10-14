@@ -4,11 +4,13 @@
   box art   DS: GameTDB (art.gametdb.com, by the game code in the ROM's header), else libretro-thumbnails
             GBA: libretro-thumbnails (github.com/libretro-thumbnails, by No-Intro file name)
   cart      DS: GameTDB's scans of the real cartridge, when it has one for the game
+  title     both: the title screen and a screenshot (snap), from libretro-thumbnails' Named_Titles and Named_Snaps
+            (the top screen's photo)
   logo      GBA: libretro-thumbnails' Named_Logos. (There is no free logo set for DS games: those get the title
             set as a logo by the menu, or put your own in media/nds/logo/, or scrape "marquee" art with
             EmulationStation's scraper: the menu reads <roms>/images/<name>-marquee.png too.)
 
-It writes <media>/<nds|gba>/<box|cart|logo>/<rom name without extension>.<png|jpg>, where the menu looks.
+It writes <media>/<nds|gba>/<box|cart|title|snap|logo>/<rom name without extension>.<png|jpg>, where the menu looks.
 Runs on the handheld (ROCKNIX has python3) or on a computer with the SD card or the network share mounted.
 Only the Python standard library.
 
@@ -205,6 +207,15 @@ def scrape_game(sysname, path, media, lr, force, stats):
             if is_image(b):
                 save(media, sysname, 'cart', base, b); got.append('cartridge scan')
                 break
+    # the top screen's photo: the title screen, and a screenshot (shown instead when the game has a logo to float
+    # over it: the title screen would show the logo twice)
+    for kind, folder, what in (('title', 'Named_Titles', 'title screen'), ('snap', 'Named_Snaps', 'screenshot')):
+        if lr and (force or not have(media, sysname, kind, base)):
+            for name in lr.find(folder, base):
+                b = lr.fetch(folder, name)
+                if b:
+                    save(media, sysname, kind, base, b); got.append(what)
+                    break
     # the logo
     if lr and (force or not have(media, sysname, 'logo', base)) and 'Named_Logos' in (lr.folders or {'Named_Logos': 1}):
         for name in lr.find('Named_Logos', base):

@@ -89,6 +89,8 @@ static inline float rr_cov(float px, float py, float x, float y, float w, float 
     return clampf(0.5f - d, 0, 1);
 }
 
+float rrect_cov(float px, float py, float x, float y, float w, float h, float r) { return rr_cov(px, py, x, y, w, h, r); }
+
 void rrect_vgrad(Surf *s, float x, float y, float w, float h, float r, uint32_t top, uint32_t bot, int a) {
     if (w <= 0 || h <= 0 || a <= 0) return;
     int x0 = MAX((int)floorf(x), s->cx0), y0 = MAX((int)floorf(y), s->cy0);
@@ -261,6 +263,26 @@ static void resample(const Img *src, float sx, float sy, float sw, float sh, Img
         dst->px[(size_t)y * w + x] = a < 0.5f ? 0 : ARGB((int)(a / tw + 0.5f), (int)(r / a + 0.5f), (int)(g / a + 0.5f), (int)(b / a + 0.5f));
     }
 }
+void img_rotate(const Img *src, float angle, Img *dst) {
+    float c = cosf(angle), s = sinf(angle);
+    int w = (int)ceilf(fabsf(src->w * c) + fabsf(src->h * s)) + 2, h = (int)ceilf(fabsf(src->w * s) + fabsf(src->h * c)) + 2;
+    if (img_alloc(dst, w, h)) return;
+    float cx = w / 2.0f, cy = h / 2.0f, sx = src->w / 2.0f, sy = src->h / 2.0f;
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+        /* 2x2 samples a pixel: the edges come out smooth */
+        int a = 0, r = 0, g = 0, b = 0;
+        for (int k = 0; k < 4; k++) {
+            float px = x + 0.25f + (k & 1) * 0.5f - cx, py = y + 0.25f + (k >> 1) * 0.5f - cy;
+            float u = px * c + py * s + sx, v = -px * s + py * c + sy;
+            if (u < 0 || v < 0 || u >= src->w || v >= src->h) continue;
+            uint32_t col = sample_bilinear(src, u - 0.5f, v - 0.5f);
+            int ca = (int)CA(col);
+            a += ca; r += (int)CR(col) * ca; g += (int)CG(col) * ca; b += (int)CB(col) * ca;
+        }
+        if (a) dst->px[(size_t)y * w + x] = ARGB(a / 4, r / a, g / a, b / a);
+    }
+}
+
 void img_resize_area(const Img *src, Img *dst, int w, int h) { resample(src, 0, 0, (float)src->w, (float)src->h, dst, w, h); }
 void img_resize_cover(const Img *src, Img *dst, int w, int h, float focus_y) {
     float k = MAX((float)w / src->w, (float)h / src->h);

@@ -212,6 +212,25 @@ void game_load_art(Game *g) {
             g->logo_state = 1;
         }
     }
+    if (!g->shot_state) {
+        /* the top screen's photo, kept at its own pixels. With a real logo to float over it, a screenshot of the game
+         * (a title screen would show the logo twice); without one, the title screen, which carries the logo itself.
+         * A DS capture holds both screens: the top one is the picture. */
+        g->shot_state = -1;
+        static const char *const want[2][2] = { { "snap", "title" }, { "title", "snap" } };
+        int real_logo = g->logo_state == 1;
+        for (int k = 0; k < 2 && g->shot_state < 0; k++) {
+            const char *kind = want[real_logo ? 0 : 1][k];
+            if (library_media(g, kind, p, sizeof p) && !img_load_fit(p, 256, 384, FIT_CONTAIN_DOWN, cfg.cache, &g->shot)) {
+                if (g->shot.h > g->shot.w) {
+                    Img t;
+                    if (!img_alloc(&t, g->shot.w, g->shot.h / 2)) { memcpy(t.px, g->shot.px, (size_t)t.w * t.h * 4); img_free(&g->shot); g->shot = t; }
+                }
+                for (int q = 0; q < g->shot.w * g->shot.h; q++) g->shot.px[q] |= 0xff000000u;
+                g->shot_state = !strcmp(kind, "title") ? 2 : 1;      /* 1 a screenshot, 2 the title screen */
+            }
+        }
+    }
 }
 
 /* the main colour of a picture: the hue that most of its colourful pixels share, averaged, then made a clean
@@ -261,6 +280,6 @@ void game_tint(Game *g) {
 }
 
 void game_free_art(Game *g) {
-    img_free(&g->label); img_free(&g->logo);
-    g->label_state = g->logo_state = 0;
+    img_free(&g->label); img_free(&g->logo); img_free(&g->shot); img_free(&g->photo);
+    g->label_state = g->logo_state = g->shot_state = 0;
 }
