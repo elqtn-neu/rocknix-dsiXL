@@ -50,6 +50,7 @@ NDS)
         # ES's DS settings, per game or for the system, as ROCKNIXDS's session reads them
         pick() { v=$(grep -F "nds[\"$GAME\"].$1=" $CFG 2>/dev/null | tail -n1 | cut -d= -f2); [ -n "$v" ] || v=$(sysconf nds.$1); echo "$v"; }
         PROF=$(pick power_profile); RND=$(pick renderer); RES=$(pick resolution3d); TF=$(pick texture_filter); RESUME=$(pick resume_on_quit)
+        SHADER=$(pick shader)       # the menu's game settings (and ES's) write these per game
         case "$PROF" in
             performance) Q=1 QW=0 CMAX= ;;
             battery) Q=3 QW=20 CMAX=1416000 ;;
@@ -71,10 +72,15 @@ NDS)
         else
             echo "-9 drastic" > /tmp/.process-kill-data
         fi
-        echo "$(up) DraStic (libdsflip): profile ${PROF:-balanced}, renderer ${RND:-auto}, resume ${RESUME:-on}"
+        echo "$(up) DraStic (libdsflip): profile ${PROF:-balanced}, renderer ${RND:-auto}, 3D ${RES:-2x}, screen ${SHADER:-none}, resume ${RESUME:-on}"
+        # a shader draws every frame on the GPU: let it clock up (the menu's session left it at powersave)
+        GPU=/sys/class/devfreq/fde60000.gpu
+        GPU_MIN=$(cat $GPU/min_freq 2>/dev/null)
+        case "${SHADER:-none}" in none|bilinear) ;; ds-fsr) echo performance > $GPU/governor 2>/dev/null ;;
+            *) echo simple_ondemand > $GPU/governor 2>/dev/null; echo 400000000 > $GPU/min_freq 2>/dev/null ;; esac
         cd $DR
         rm -f /tmp/dsflip-state
-        SDL_VIDEODRIVER=dummy XDG_RUNTIME_DIR=$RT DSFLIP_LOG=$DR/dsflip/dsflip.log DSHOOK_SHADER=${DSHOOK_SHADER:-none} \
+        SDL_VIDEODRIVER=dummy XDG_RUNTIME_DIR=$RT DSFLIP_LOG=$DR/dsflip/dsflip.log DSHOOK_SHADER=${SHADER:-none} \
             LD_PRELOAD=$DR/dsflip/libdsflip.so $DR/dsflip/drastic "$ROM" > $DR/dsflip/drastic.out 2>&1 &
         P=$!
         trap 'kill -9 $P 2>/dev/null' TERM INT
@@ -86,6 +92,7 @@ NDS)
         [ "$v" = ready ] || kill -9 $P 2>/dev/null
         wait $P; rc=$?
         [ -n "$MAXF" ] && echo "$MAXF" > $CPU/scaling_max_freq 2>/dev/null
+        [ -n "$GPU_MIN" ] && echo "$GPU_MIN" > $GPU/min_freq 2>/dev/null
         [ -n "$GOV" ] && echo "$GOV" > $CPU/scaling_governor 2>/dev/null
         echo "-9 drastic" > /tmp/.process-kill-data
         exit $rc
@@ -99,7 +106,11 @@ NDS)
     exit $rc
     ;;
 GBA)
-    CORE=$(conf gba_core); [ -n "$CORE" ] || CORE=mgba
+    GAME=$(basename "$ROM")
+    # the game's own emulator (the menu's game settings), else config.ini's, else mGBA; RetroArch's other settings
+    # (screen size, smoothing, resume, rewind, run-ahead) are read by ROCKNIX's launcher from system.cfg itself
+    CORE=$(grep -F "gba[\"$GAME\"].core=" $CFG 2>/dev/null | tail -n1 | cut -d= -f2)
+    [ -n "$CORE" ] || CORE=$(conf gba_core); [ -n "$CORE" ] || CORE=mgba
     EMU=$(conf gba_emulator); [ -n "$EMU" ] || EMU=retroarch
     echo "$(up) RetroArch ($CORE)"
     sway_up

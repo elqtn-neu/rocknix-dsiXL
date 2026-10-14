@@ -59,7 +59,8 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 |---|---|
 | Left / Right | the previous / next game (hold: a glide that speeds up) |
 | Up / Down | five games back / on |
-| L / R, SELECT | the tabs: NDS, ★ Favorites (the middle one, where the menu opens), GBA |
+| L / R | the tabs: NDS, ★ Favorites (the middle one, where the menu opens), GBA |
+| SELECT (or the gear, bottom right) | the selected game's settings |
 | A (or tap the selected cartridge) | start it (on release: the cartridge sinks in while held) |
 | X | the top screen: the logo, or the photo view |
 | Y | a favourite, or not (a gold star on the cartridge) |
@@ -75,6 +76,21 @@ cartridges carry their box art and the top screen the game's logo).</sub></p>
 - Y on a favourite there takes it off the shelf (its neighbours close up); in the NDS and GBA tabs Y puts the star
   on or off, and favourites stay in their alphabetical places, marked in gold on the scroll bar.
 - Kept in `/storage/.config/dsixl/favorites.txt` (a line per game, `NDS<tab>file name`, in the order added).
+
+**Game settings** (SELECT, or tap the gear): each game's emulator options, in a window on the bottom screen.
+- Up/Down picks an option, Left/Right (or the arrows) changes it, the top screen says what the option does and
+  what the choice does.
+- The recommended choice of each option has a little gold star; **Recommended** puts them all back. **Play**
+  starts the game with them; B keeps them and closes.
+- DS (ROCKNIXDS's DraStic): Screen (Crisp pixels, Pixel grid, Crisp with DS colors, Smooth, Pixel-perfect),
+  Performance (Battery saver, Balanced, Max performance), 3D quality (2x, 3x), 3D textures, 3D engine, Resume.
+- GBA (RetroArch): Emulator (mGBA, gpSP), Screen size (Pixel-perfect, Fill screen), Screen (Sharp, Smooth), Resume,
+  Rewind, Response (run-ahead).
+- They're written to ROCKNIX's `system.cfg` as that game's own settings (`nds["<file>"].shader=ds-crisp`), the
+  same keys EmulationStation uses: the game starts with them, and EmulationStation shows them too.
+
+No emulator is bundled: the menu starts the ones on the handheld (ROCKNIXDS's DraStic for DS, ROCKNIX's RetroArch
+for GBA).
 
 ## Install (on the handheld, over ssh)
 
