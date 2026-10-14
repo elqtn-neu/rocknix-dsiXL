@@ -75,7 +75,7 @@ static inline void room_tick(Room *r, float in, float *l, float *rr) {
 
 /* ---- the voices ---- */
 
-enum { V_EP, V_BELL, V_GLASS, V_WOOD, V_BASS, V_SHAKER, V_RIM, V_KICK, V_CLICK, V_AIR };
+enum { V_EP, V_BELL, V_GLASS, V_WOOD, V_BASS, V_CHIME, V_SHAKER, V_RIM, V_KICK, V_CLICK, V_AIR };
 typedef struct {
     int kind, on;
     float f, ph[4], amp, gl, gr;
@@ -99,6 +99,7 @@ static void voice_start(Voice *v, int kind, float midi_or_hz, float dur, float v
     case V_GLASS: v->envk = expf(-3.2f / R); v->relk = expf(-7 / R); v->idx = 1.3f; v->idxk = expf(-9 / R); break;
     case V_WOOD:  v->envk = expf(-11 / R); v->relk = expf(-25 / R); v->idx = 1.0f; v->idxk = expf(-60 / R); break;
     case V_BASS:  v->envk = expf(-2.2f / R); v->relk = expf(-14 / R); break;
+    case V_CHIME: v->envk = expf(-1.7f / R); v->relk = expf(-6 / R); v->idx = 1; v->idxk = expf(-14 / R); v->idx2 = 1; v->idx2k = expf(-40 / R); break;
     case V_SHAKER: v->envk = expf(-60 / R); v->relk = v->envk; break;
     case V_RIM:   v->envk = expf(-55 / R); v->relk = v->envk; break;
     case V_KICK:  v->envk = expf(-9 / R); v->relk = v->envk; v->aux = 1; break;
@@ -123,6 +124,16 @@ static inline float voice_tick(Voice *v) {
         out = fsin(v->ph[0] + m * 0.18f) * (1 + 0.08f * fsin(v->ph[2]));
         v->ph[0] += f / R; v->ph[1] += f * 3.5f / R; v->ph[2] += 5.5f / R;
         v->idx *= v->idxk;
+        break;
+    }
+    case V_CHIME: {                     /* the tune: a soft vibraphone. Only the note's own harmonics (sweet, never
+                                         * clangy), the 2nd and 4th dying away quickly, a slow tremolo, rounded off */
+        float s = fsin(v->ph[0]) + 0.22f * v->idx * fsin(v->ph[0] * 2) + 0.10f * v->idx2 * fsin(v->ph[0] * 4);
+        s *= 1 - 0.07f * (1 + fsin(v->ph[1]));
+        v->lp += (s - v->lp) * MIN(1.0f, 2 * PI_F * 4500 / R);
+        out = v->lp * MIN(1.0f, v->t / 0.004f);   /* (a softer 4 ms attack) */
+        v->ph[0] += f / R; v->ph[1] += 5.2f / R;
+        v->idx *= v->idxk; v->idx2 *= v->idx2k;
         break;
     }
     case V_GLASS: {                     /* 1:2.76: a struck glass */
@@ -340,7 +351,7 @@ int16_t *synth_sfx(int id, int *frames) {
 
 /* ---- the music: an original tune in the DSi menu's spirit (not its theme): a light bossa in F, 100 beats a
  * minute, 32 bars (about 80 seconds) going round. Electric piano chords, a plucked bass, a shaker, a rim, a soft
- * kick; the tune on bells, the second time round on wood an octave up. ---- */
+ * kick; the tune on a soft vibraphone, the second time round on wood an octave up. ---- */
 
 #define BPM 100.0
 enum { MAJ7, MAJ9, MIN7, MIN9, DOM7, DOM9, DOM13, SUS7, MIN6, DOM7B9 };
@@ -431,7 +442,7 @@ static void m_step(long s) {
     /* the tune */
     for (int i = 0; i < ARRAY_LEN(MEL); i++) if (MEL[i].bar == b16 && MEL[i].at == st) {
         /* (out in front: the bells, and a soft electric piano under them for body) */
-        if (bar < 16) { m_note(V_BELL, MEL[i].note, MEL[i].len, 0.22f * human(s, 4), 0.15f); m_note(V_EP, MEL[i].note, MEL[i].len, 0.07f, 0.1f); }
+        if (bar < 16) { m_note(V_CHIME, MEL[i].note, MEL[i].len, 0.26f * human(s, 4), 0.15f); m_note(V_EP, MEL[i].note, MEL[i].len, 0.07f, 0.1f); }
         else { m_note(V_WOOD, MEL[i].note + 12, MEL[i].len, 0.16f * human(s, 4), 0.2f); m_note(V_GLASS, MEL[i].note, MEL[i].len, 0.05f, -0.2f); }
     }
 }
