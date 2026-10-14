@@ -15,12 +15,13 @@ OUT = os.path.join(HERE, '..', 'src', 'font_data.c')
 
 # (C name, file, pixel size, extra tracking in px)
 FONTS = [
-    ('FONT_SM', 'MPLUS1p-Medium.ttf', 11, 0),     # status bar, small labels
-    ('FONT_MD', 'MPLUS1p-Medium.ttf', 13, 0),     # body text: the DSi's own size
-    ('FONT_BD', 'MPLUS1p-Bold.ttf', 13, 0),       # titles, buttons
-    ('FONT_LG', 'MPLUS1p-ExtraBold.ttf', 17, 0),  # big labels, fallback logos
+    ('FONT_SM', 'MPLUS1p-Medium.ttf', 10, 0),     # small labels
+    ('FONT_MD', 'MPLUS1p-Medium.ttf', 12, 0),     # body text (a touch under the DSi's 13: the XL's big panels)
+    ('FONT_BD', 'MPLUS1p-Bold.ttf', 12, 0),       # titles, buttons
+    ('FONT_LG', 'MPLUS1p-ExtraBold.ttf', 16, 0),  # big labels, fallback logos
     ('FONT_XL', 'MPLUS1p-ExtraBold.ttf', 26, 0),  # the bottom screen's watermark ("Nintendo DSi Menu")
     ('FONT_HS', 'MPLUS1p-Bold.ttf', 15, -1),      # the health and safety headline (condensed)
+    ('FONT_XS', 'MPLUS1p-Medium.ttf', 9, 0),      # the status bar's date and time
 ]
 
 CHARS = list(range(0x20, 0x7f)) + list(range(0xa0, 0x100)) + [

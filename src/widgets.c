@@ -150,52 +150,50 @@ void emblem(Surf *s, int sys, float cx, int y, uint32_t tint, int alpha) {
 }
 
 static void speaker_icon(Surf *s, int x, int y, uint32_t c, int a) {
-    /* the DSi's volume glyph: a speaker and two waves */
-    rect_blend(s, x, y + 3, 2, 4, c, a);
-    for (int i = 0; i < 4; i++) vline(s, x + 2 + i, y + 3 - i, y + 6 + i, c, a);
-    static const int w1[][2] = { { 8, 2 }, { 9, 3 }, { 9, 4 }, { 9, 5 }, { 9, 6 }, { 8, 7 } };
-    static const int w2[][2] = { { 10, 0 }, { 11, 1 }, { 12, 2 }, { 12, 3 }, { 12, 4 }, { 12, 5 }, { 12, 6 }, { 12, 7 }, { 11, 8 }, { 10, 9 } };
-    for (int i = 0; i < ARRAY_LEN(w1); i++) pblend(s, x + w1[i][0], y + w1[i][1], c, a);
-    for (int i = 0; i < ARRAY_LEN(w2); i++) pblend(s, x + w2[i][0], y + w2[i][1], c, a);
+    /* the DSi's volume glyph, small: a speaker and a wave */
+    rect_blend(s, x, y + 2, 2, 3, c, a);
+    for (int i = 0; i < 3; i++) vline(s, x + 2 + i, y + 2 - i, y + 4 + i, c, a);
+    static const int w[][2] = { { 6, 1 }, { 7, 2 }, { 7, 3 }, { 7, 4 }, { 6, 5 } };
+    for (int i = 0; i < ARRAY_LEN(w); i++) pblend(s, x + w[i][0], y + w[i][1], c, a);
 }
 
 static void battery_icon(Surf *s, int x, int y, int alpha, double t) {
     int chg, lvl = battery_level(&chg);
-    /* the outline, its tip on the left as on the DSi */
-    rect_blend(s, x, y + 2, 2, 4, C_TEXT, alpha);
-    rect_blend(s, x + 2, y, 14, 9, C_TEXT, alpha);
-    rect_blend(s, x + 3, y + 1, 12, 7, 0xffffff, alpha);
-    int bars = lvl < 0 ? 4 : lvl > 75 ? 4 : lvl > 50 ? 3 : lvl > 25 ? 2 : lvl > 10 ? 1 : 0;
-    if (chg) bars = ((int)(t * 2.5)) % 5;                   /* charging: the bars fill up in turn */
+    /* the outline, its tip on the left as on the DSi; three bars */
+    rect_blend(s, x, y + 2, 1, 3, C_TEXT, alpha);
+    rect_blend(s, x + 1, y, 12, 7, C_TEXT, alpha);
+    rect_blend(s, x + 2, y + 1, 10, 5, 0xffffff, alpha);
+    int bars = lvl < 0 ? 3 : lvl > 66 ? 3 : lvl > 33 ? 2 : lvl > 10 ? 1 : 0;
+    if (chg) bars = ((int)(t * 2.5)) % 4;                   /* charging: the bars fill up in turn */
     uint32_t col = (lvl >= 0 && lvl <= 10 && !chg) ? 0xe8341c : 0x1b8ef2;
-    if (!bars && lvl >= 0 && !chg) { if (((int)(t * 2)) & 1) rect_blend(s, x + 4, y + 2, 2, 5, col, alpha); }   /* low: blinks */
-    for (int i = 0; i < bars; i++) rect_vgrad(s, x + 12 - i * 3, y + 2, 2, 5, col_mix(col, 0xffffff, 90), col, alpha);
+    if (!bars && lvl >= 0 && !chg) { if (((int)(t * 2)) & 1) rect_blend(s, x + 3, y + 2, 2, 3, col, alpha); }   /* low: blinks */
+    for (int i = 0; i < bars; i++) rect_vgrad(s, x + 9 - i * 3, y + 2, 2, 3, col_mix(col, 0xffffff, 90), col, alpha);
 }
 
+/* the status bar: small, as on the DSi XL's big top screen (10 px: the speaker, the date and time, the battery) */
 void status_bar(Surf *s, float y_off, int alpha, double t) {
     int y = (int)roundf(y_off);
-    Accent a = accent();
     speaker_icon(s, 4, y + 3, C_TEXT, alpha);
-    (void)a;
     if (is_birthday()) {
         /* a birthday cake after the speaker, its candle flickering */
-        int cx = 22, cy = y + 2;
-        rect_blend(s, cx, cy + 5, 11, 6, 0xf4c6d6, alpha); rect_blend(s, cx, cy + 5, 11, 2, 0xffffff, alpha);
-        rect_blend(s, cx - 1, cy + 11, 13, 1, C_TEXT, alpha);
-        for (int i = 0; i < 4; i++) pblend(s, cx + 1 + i * 3, cy + 7, 0xe8476a, alpha);
-        rect_blend(s, cx + 5, cy + 1, 1, 4, 0x6aa7e8, alpha);
-        pblend(s, cx + 5, cy - (((int)(t * 6)) & 1), 0xffb020, alpha); pblend(s, cx + 5, cy, 0xffe070, alpha);
+        int cx = 16, cy = y + 1;
+        rect_blend(s, cx, cy + 4, 9, 4, 0xf4c6d6, alpha); rect_blend(s, cx, cy + 4, 9, 1, 0xffffff, alpha);
+        rect_blend(s, cx - 1, cy + 8, 11, 1, C_TEXT, alpha);
+        for (int i = 0; i < 3; i++) pblend(s, cx + 1 + i * 3, cy + 6, 0xe8476a, alpha);
+        rect_blend(s, cx + 4, cy + 1, 1, 3, 0x6aa7e8, alpha);
+        pblend(s, cx + 4, cy - (((int)(t * 6)) & 1), 0xffb020, alpha); pblend(s, cx + 4, cy, 0xffe070, alpha);
     }
     char date[16], tm[16]; int colon;
     clock_text(date, sizeof date, tm, sizeof tm, &colon);
-    /* "07/29 07 58": the time's colon blinks, drawn by hand between the hours and the minutes */
-    int x = 146;
-    x = text(s, FONT_MD, x, y - 3, C_TEXT, alpha, date) + 5;
+    /* "07/29 07:58", right-aligned up to the battery: the time's colon blinks, drawn by hand */
     char hh[3] = { tm[0], tm[1], 0 }, mm[3] = { tm[3], tm[4], 0 };
-    x = text(s, FONT_MD, x, y - 3, C_TEXT, alpha, hh);
-    if (colon) { rect_blend(s, x + 1, y + 5, 2, 2, C_TEXT, alpha); rect_blend(s, x + 1, y + 9, 2, 2, C_TEXT, alpha); }
-    text(s, FONT_MD, x + 4, y - 3, C_TEXT, alpha, mm);
-    battery_icon(s, 237, y + 3, alpha, t);
+    int w = text_w(FONT_XS, date) + 5 + text_w(FONT_XS, hh) + 3 + text_w(FONT_XS, mm);
+    int x = 233 - w;
+    x = text(s, FONT_XS, x, y - 1, C_TEXT, alpha, date) + 5;
+    x = text(s, FONT_XS, x, y - 1, C_TEXT, alpha, hh);
+    if (colon) { pblend(s, x + 1, y + 4, C_TEXT, alpha); pblend(s, x + 1, y + 8, C_TEXT, alpha); }
+    text(s, FONT_XS, x + 3, y - 1, C_TEXT, alpha, mm);
+    battery_icon(s, 238, y + 3, alpha, t);
 }
 
 void btn_glyph(Surf *s, int x, int y, const char *letter, uint32_t bg, int alpha) {

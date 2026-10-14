@@ -2,7 +2,7 @@
 #pragma once
 #include "gfx.h"
 
-enum { FONT_SM, FONT_MD, FONT_BD, FONT_LG, FONT_XL, FONT_HS, FONT_COUNT };
+enum { FONT_SM, FONT_MD, FONT_BD, FONT_LG, FONT_XL, FONT_HS, FONT_XS, FONT_COUNT };
 
 typedef struct { uint16_t cp; uint32_t off; uint8_t w, h; int8_t ox, oy; int8_t adv; } Glyph;
 typedef struct { int ascent, descent, count; const Glyph *glyphs; const uint8_t *bits; } FontData;
