@@ -76,7 +76,7 @@ int picker_update(Picker *p, const PanelIn *in, float dt) {
         spring_step(&p->scroll, p->want, 500, 40, dt);
     }
     if (res >= 0) { sfx(SFX_SELECT); rumble(12, 0.35f); p->open = 0; }
-    else if (res == -2) { sfx(SFX_BACK); p->open = 0; }
+    else if (res == -2) { sfx(SFX_CLOSE); p->open = 0; }
     return res;
 }
 
@@ -187,16 +187,16 @@ static int kbd_press(Kbd *k, int x, int y, double t) {
     rumble(6, 0.2f);
     if (y < 4) {
         size_t n = strlen(k->text);
-        if (n + 1 < sizeof k->text && n < 63) { k->text[n] = key_char(k, x, y); k->text[n + 1] = 0; sfx_ex(SFX_CURSOR, 1.1f, 0.8f); }
+        if (n + 1 < sizeof k->text && n < 63) { k->text[n] = key_char(k, x, y); k->text[n + 1] = 0; sfx_pitch(SFX_KEY, 0.94f + 0.012f * (float)((x * 7 + y * 3) % 10)); }
         else sfx(SFX_BUMP);
         if (k->shift == 1) k->shift = 0;
         return -1;
     }
     switch (bottom_key(x)) {
-    case K_SHIFT: k->shift = (k->shift + 1) % 3; sfx(SFX_TAB); break;
-    case K_SYM: k->sym = !k->sym; sfx(SFX_TAB); break;
-    case K_SPACE: { size_t n = strlen(k->text); if (n < 63) { k->text[n] = ' '; k->text[n + 1] = 0; } sfx_ex(SFX_CURSOR, 0.9f, 0.8f); break; }
-    case K_BACK: { size_t n = strlen(k->text); if (n) { k->text[n - 1] = 0; sfx_ex(SFX_BACK, 1.2f, 0.7f); } else sfx(SFX_BUMP); break; }
+    case K_SHIFT: k->shift = (k->shift + 1) % 3; sfx_pitch(SFX_TOGGLE, k->shift ? 1.0f : 0.84f); break;
+    case K_SYM: k->sym = !k->sym; sfx_pitch(SFX_TOGGLE, k->sym ? 1.0f : 0.84f); break;
+    case K_SPACE: { size_t n = strlen(k->text); if (n < 63) { k->text[n] = ' '; k->text[n + 1] = 0; } sfx_pitch(SFX_KEY, 0.8f); break; }
+    case K_BACK: { size_t n = strlen(k->text); if (n) { k->text[n - 1] = 0; sfx_pitch(SFX_KEY, 0.7f); } else sfx(SFX_BUMP); break; }
     case K_OK: return 1;
     }
     return -1;
@@ -214,7 +214,7 @@ int kbd_update(Kbd *k, const PanelIn *in, float dt) {
     if (rp(in, in->a)) res = kbd_press(k, k->kx, k->ky, in->t);
     if (rp(in, in->b)) {           /* B: back a letter; with nothing typed, away */
         size_t n = strlen(k->text);
-        if (n) { k->text[n - 1] = 0; sfx_ex(SFX_BACK, 1.2f, 0.7f); } else res = 0;
+        if (n) { k->text[n - 1] = 0; sfx_pitch(SFX_KEY, 0.7f); } else res = 0;
     }
     if (pr(in, B_Y)) kbd_press(k, 4, 4, in->t);                /* Y: a space */
     if (pr(in, B_L1) || pr(in, B_SELECT)) kbd_press(k, 0, 4, in->t);   /* shift */
@@ -231,7 +231,7 @@ int kbd_update(Kbd *k, const PanelIn *in, float dt) {
         k->touch_key = -1;
     }
     if (res == 1) { sfx(SFX_SELECT); rumble(15, 0.4f); k->open = 0; }
-    else if (res == 0) { sfx(SFX_BACK); k->open = 0; }
+    else if (res == 0) { sfx(SFX_CLOSE); k->open = 0; }
     return res;
 }
 

@@ -837,7 +837,7 @@ static int bri_from_system(void) {
     return best + 1;
 }
 static void bri_show(int lv) {
-    if (lv != bri_lv || T - bri_t > 1.4) sfx_ex(SFX_CURSOR, 0.80f + 0.09f * lv, 0.8f);
+    if (lv != bri_lv || T - bri_t > 1.4) sfx_pitch(SFX_BRIGHT, 0.80f + 0.09f * lv);
     bri_lv = lv; bri_t = T;
     rumble(8, 0.25f);
 }
@@ -923,7 +923,7 @@ static void draw_error(Surf *s, float k) {
     float press = (tch.down && tch.zone == 14) ? 1 : 0;
     button(s, 128 - 40, y + 30 + used + 4, 80, 18, "OK", 1, press, a);
 }
-static void err_close(void) { err_open = 0; sfx(SFX_BACK); last_input = T; }
+static void err_close(void) { err_open = 0; sfx(SFX_CLOSE); last_input = T; }
 
 /* ---- the battery: a notice on the top screen when it runs low, and when the charger goes in ---- */
 
@@ -1037,10 +1037,10 @@ static void opt_act(int i, int dir) {
     switch (i) {
     case OPT_EMU: opt_open = 0; opt_t = T; gs_open_here(); break;
     case OPT_COLOR: cfg.color = (cfg.color + (dir ? dir : 1) + 16) % 16; sfx(SFX_CURSOR); config_save(); break;
-    case OPT_CLOCK: cfg.clock24 = !cfg.clock24; sfx(SFX_SELECT); config_save(); break;
-    case OPT_SFX: cfg.sfx = !cfg.sfx; sfx(SFX_SELECT); config_save(); break;
-    case OPT_MUSIC: cfg.music = !cfg.music; if (cfg.music) music_play(); else music_stop(); sfx(SFX_SELECT); config_save(); break;
-    case OPT_RUMBLE: cfg.rumble = !cfg.rumble; sfx(SFX_SELECT); config_save(); rumble(30, 0.6f); break;
+    case OPT_CLOCK: cfg.clock24 = !cfg.clock24; sfx_pitch(SFX_TOGGLE, cfg.clock24 ? 1.0f : 0.84f); config_save(); break;
+    case OPT_SFX: cfg.sfx = !cfg.sfx; sfx(SFX_TOGGLE); config_save(); break;
+    case OPT_MUSIC: cfg.music = !cfg.music; if (cfg.music) music_play(); else music_stop(); sfx_pitch(SFX_TOGGLE, cfg.music ? 1.0f : 0.84f); config_save(); break;
+    case OPT_RUMBLE: cfg.rumble = !cfg.rumble; sfx_pitch(SFX_TOGGLE, cfg.rumble ? 1.0f : 0.84f); config_save(); rumble(30, 0.6f); break;
     case OPT_RESCAN: {
         sfx(SFX_SELECT);
         int n = rescan();
@@ -1155,7 +1155,7 @@ static void gs_page(int sys_) {
     if (sys_ == gs_sys) return;
     gs_page_dir = sys_ > gs_sys ? 1 : -1; gs_page_t = T;
     gs_sys = sys_; gs_n = gs_rows_of(gs_sys); gs_sel = MIN(gs_sel, gs_n + 1);
-    sfx(SFX_TAB); rumble(10, 0.3f);
+    sfx(SFX_PAGE); rumble(10, 0.3f);
 }
 static void gs_change(int row, int dir) {
     const GameOpt *o; gamecfg_opts(gs_sys, &o);
@@ -1170,7 +1170,7 @@ static void gs_activate(void) {
         for (int i = 0; i < gs_n; i++) gs_choice[gs_sys][i] = o[i].rec;
         gs_val_t = T; gs_val_dir = 1;
         sfx_pitch(SFX_SELECT, 1.15f); rumble(15, 0.4f);
-    } else { gs_close(); sfx(SFX_BACK); }
+    } else { gs_close(); sfx(SFX_CLOSE); }
 }
 
 static void gear_icon(Surf *s, float cx, float cy, uint32_t c, int a) {
@@ -1284,7 +1284,7 @@ static void gs_update(void) {
     if (pressed(B_L1)) gs_page(SYS_NDS);
     if (pressed(B_R1)) gs_page(SYS_GBA);
     if (pressed(btn_a())) gs_activate();
-    if (pressed(btn_b()) || pressed(B_SELECT) || pressed(B_START)) { gs_close(); sfx(SFX_BACK); }
+    if (pressed(btn_b()) || pressed(B_SELECT) || pressed(B_START)) { gs_close(); sfx(SFX_CLOSE); }
 }
 
 /* ---- the boot screens ---- */
@@ -1543,7 +1543,7 @@ static void art_poll(void) {
         if (artjob.rc == 0) {
             char m[80]; snprintf(m, sizeof m, art_found == 1 ? "New art for 1 game" : "New art for %d games", art_found);
             notice(2, art_found ? m : "No new art found");
-            sfx_pitch(SFX_SELECT, 1.2f);
+            sfx(SFX_DONE);
         } else {
             char m[300]; snprintf(m, sizeof m, "The art script stopped (error %d): %s", artjob.rc, art_line);
             say_error("Couldn't get all the art.", m);
@@ -1652,7 +1652,7 @@ static void opt_act_more(int i) {
         sfx(on ? SFX_BACK : SFX_SELECT);
         break;
     }
-    case OPT_SHOWHIDDEN: cfg.show_hidden = !cfg.show_hidden; state_save(); order_rebuild(); fav_rebuild(); reorder_t = T; sfx(SFX_SELECT); break;
+    case OPT_SHOWHIDDEN: cfg.show_hidden = !cfg.show_hidden; state_save(); order_rebuild(); fav_rebuild(); reorder_t = T; sfx_pitch(SFX_TOGGLE, cfg.show_hidden ? 1.0f : 0.84f); break;
     case OPT_CONTROLS: { Game *g = cur_game(sys); opt_open = 0; opt_t = T; help_open(g ? g->sys : SYS_NDS, 0); break; }
     case OPT_ALBUM: opt_open = 0; opt_t = T; album_open(); break;
     }
@@ -1685,7 +1685,7 @@ static void flow_job_done(void) {
         flow_end();
         if (rc == 0 && strstr(o, "ok")) {
             wifi_state = 1; snprintf(wifi_ssid, sizeof wifi_ssid, "%s", join_ssid);
-            char m[96]; snprintf(m, sizeof m, "Connected to %s", join_ssid); notice(3, m); sfx_pitch(SFX_SELECT, 1.2f);
+            char m[96]; snprintf(m, sizeof m, "Connected to %s", join_ssid); notice(3, m); sfx(SFX_DONE);
         } else {
             char m[200]; snprintf(m, sizeof m, "Check the password for \xe2\x80\x9c%s\xe2\x80\x9d, and that the network is in reach.", join_ssid);
             say_error("Couldn't connect.", m);
@@ -1792,7 +1792,7 @@ static void help_close(void) {
     if (help_then_launch) {
         cfg.seen_help[help_sys] = 1; state_save();
         help_wait = 1; start_launch(); help_wait = 0;
-    } else sfx(SFX_BACK);
+    } else sfx(SFX_CLOSE);
 }
 /* a button's name in a little dark chip; returns the end x */
 static int chip(Surf *s, int x, int y, const char *label, int a) {
@@ -1899,7 +1899,7 @@ static void album_open(void) {
     sfx(SFX_OPEN); rumble(12, 0.3f);
 }
 static void album_close(void) {
-    alb_open = 0; sfx(SFX_BACK);
+    alb_open = 0; sfx(SFX_CLOSE);
     img_free(&alb_big); img_free(&alb_old); alb_big_i = -1;
     for (int i = 0; i < albn; i++) { img_free(&alb_th[i]); alb_th_st[i] = 0; }
 }
@@ -1922,8 +1922,8 @@ static void album_update(float dt) {
         if (repeat(B_RIGHT)) album_pick(alb_sel + 1);
         if (repeat(B_UP)) album_pick(alb_sel - AL_COLS);
         if (repeat(B_DOWN)) album_pick(alb_sel + AL_COLS);
-        if (repeat(B_L1)) album_pick(alb_sel - AL_COLS * AL_ROWS);
-        if (repeat(B_R1)) album_pick(alb_sel + AL_COLS * AL_ROWS);
+        if (repeat(B_L1)) { album_pick(alb_sel - AL_COLS * AL_ROWS); sfx(SFX_PAGE); }
+        if (repeat(B_R1)) { album_pick(alb_sel + AL_COLS * AL_ROWS); sfx(SFX_PAGE); }
         if (pressed(btn_a())) { alb_show = !alb_show; alb_show_t = T; sfx_pitch(SFX_SELECT, alb_show ? 1.2f : 0.9f); }
         if (alb_show && T - alb_show_t > 4) { alb_show_t = T; alb_sel = (alb_sel + 1) % albn; alb_sel_t = T; }
     }
@@ -2200,7 +2200,7 @@ static void watch_card(void) {
     for (int s = 0; s < SYS_COUNT; s++) if (library_count_files(s) != lib[s].n) changed = 1;
     if (!changed) return;
     int n = rescan();
-    if (n > 0) { char m[48]; snprintf(m, sizeof m, n == 1 ? "1 new game" : "%d new games", n); notice(2, m); sfx_pitch(SFX_SELECT, 1.2f); }
+    if (n > 0) { char m[48]; snprintf(m, sizeof m, n == 1 ? "1 new game" : "%d new games", n); notice(2, m); sfx(SFX_DONE); }
 }
 
 /* ---- init ---- */
@@ -2403,13 +2403,13 @@ static void touch_update(void) {
         else if (tch.zone == 3 && !tch.moved) {
             int i = (int)floorf((tch.y - (OPT_Y + 26)) / (float)OPT_ROW + opt_scroll.x);
             if (i == opt_sel) opt_act(opt_id(i), 1);
-        } else if (tch.zone == 4) { opt_open = 0; opt_t = T; sfx(SFX_BACK); }
+        } else if (tch.zone == 4) { opt_open = 0; opt_t = T; sfx(SFX_CLOSE); }
         else if (tch.zone == 6 && !tch.moved) gs_open_here();
         else if (tch.zone == 12 && !tch.moved) bri_set(bri_lv % 5 + 1);
         else if (tch.zone == 7 && !tch.moved) gs_change(gs_sel, tch.x0 < (GS_X + 100 + GS_X + GS_W - 10) / 2 ? -1 : 1);
         else if (tch.zone == 9 && !tch.moved) gs_change(gs_sel, 1);
         else if (tch.zone == 8 && !tch.moved) { gs_sel = gs_n + (tch.x0 >= 128); gs_activate(); }
-        else if (tch.zone == 10 && !tch.moved) { gs_close(); sfx(SFX_BACK); }
+        else if (tch.zone == 10 && !tch.moved) { gs_close(); sfx(SFX_CLOSE); }
         else if (tch.zone == 11 && !tch.moved) gs_page(tch.x0 < 128 ? SYS_NDS : SYS_GBA);
     }
 }
@@ -2439,7 +2439,7 @@ static void toggle_fav(void) {
     if (sys == V_FAV) { logo_cur = cur_game(sys); logo_prev = 0; }
     fx_of(sys, r->sel)->wob.v += on ? -10 : 8;
     if (on) {
-        sfx_pitch(SFX_SELECT, 1.25f); rumble(20, 0.5f);
+        sfx(SFX_STAR); rumble(20, 0.5f);
         RowGeo G = geo(sys);
         for (int i = 0; i < 10; i++) {
             float a = i * (2 * PI_F / 10), sp = 50 + (hash3(i, (int)(T * 60), 5) % 40);
@@ -2460,7 +2460,7 @@ static void menu_update(float dt) {
         if (repeat(B_LEFT) && opt_id(opt_sel) == OPT_COLOR) opt_act(OPT_COLOR, -1);
         if (repeat(B_RIGHT) && opt_id(opt_sel) == OPT_COLOR) opt_act(OPT_COLOR, 1);
         if (pressed(btn_a())) opt_act(opt_id(opt_sel), 1);
-        if (pressed(btn_b()) || pressed(B_START)) { opt_open = 0; opt_t = T; sfx(SFX_BACK); }
+        if (pressed(btn_b()) || pressed(B_START)) { opt_open = 0; opt_t = T; sfx(SFX_CLOSE); }
     } else if (intro_t < 0 || T - intro_t > 0.25) {
         /* left / right: a step at once; held, a glide that picks up speed; let go, it settles on the next one */
         for (int k = 0; k < 2; k++) {
@@ -2647,7 +2647,7 @@ static int raw_new_input(const Input *i) {
     return n;
 }
 static void wake(int from_black) {
-    if (pw_mode >= PW_DIM) { wake_t = T; wake_black = from_black; if (cfg.music && state == ST_MENU) music_fade(1, 0.6f); }
+    if (pw_mode >= PW_DIM) { wake_t = T; wake_black = from_black; if (cfg.music && state == ST_MENU) music_fade(0.55f, 0.6f); if (from_black) sfx_ex(SFX_WAKE, 1.0f, 0.6f); }
     swallow = 1; last_input = T; pw_mode = PW_FULL;
 }
 
@@ -2656,7 +2656,7 @@ void ui_idle_input(const Input *i) { if (raw_new_input(i)) wake(1); }
 void ui_resumed(void) {
     /* the lid opened: out of black, the open sound */
     pw_mode = PW_DIM; wake(1); swallow = 0;
-    sfx(SFX_OPEN);
+    sfx(SFX_WAKE);
 }
 static void pw_step(void) {
     double idle = T - last_input;

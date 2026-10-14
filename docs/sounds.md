@@ -4,6 +4,12 @@ The menu plays a sound file for each of these moments, from its sound folder
 (`/storage/roms/dsixl/sounds`, on the network share as `roms/dsixl/sounds`). A missing file falls back to a built-in
 synthesized sound. Put the DSi's own sounds here and the menu sounds like the DSi.
 
+**Without a pack**, the menu makes its own (`src/synth.c`): soft glassy bells, a mellow electric piano, wooden
+ticks with a little snap under them for the tactile feel, all ringing in a small room. Its music is an original
+tune in the spirit of the DSi menu (a relaxed bossa in F, about 80 seconds going round), not Nintendo's theme. It is
+played by a small sequencer as it goes: no file, almost no memory, a few percent of one CPU core. A `music.mp3`
+in the pack replaces it.
+
 The DSi's sounds aren't included: they are Nintendo's recordings. Use your own copies. For example, rip them from a
 DSi you own, or extract them from the DSi system menu's sound archive (an `.sdat` file) with an SDAT tool such as
 VGMTrans or Tinke, then export WAV files.
@@ -24,6 +30,14 @@ VGMTrans or Tinke, then export WAV files.
 | `scroll.wav` | dragging along the scroll bar | the scroll bar's tick |
 | `error.wav` | nothing to start | the error buzz |
 | `notch.wav` | the selection locking into the frame (a detent) | a short, firm click (the DSi's icon-landing click) |
+| `key.wav` | a key of the touch keyboard (Wi-Fi password) | the DSi keyboard's key click |
+| `toggle.wav` | an option switched on (played lower for off) | a settings toggle |
+| `close.wav` | a window closing | the window-close sound |
+| `star.wav` | a game made a favourite | a sparkle |
+| `done.wav` | something finished well (connected, art found) | a success chime |
+| `page.wav` | a window's page, the album's pages | the page-turn sound |
+| `wake.wav` | the lid opened, the screens back on | the open-lid sound |
+| `bright.wav` | a brightness step | the brightness change click |
 | `music.mp3` (or `music.wav`) | the menu's music, looped | the DSi Menu theme |
 
 - **Formats:** WAV (8, 16 or 24-bit PCM, or 32-bit float; mono or stereo; any sample rate) or MP3, under the same

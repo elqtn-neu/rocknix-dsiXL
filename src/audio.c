@@ -6,6 +6,7 @@
 #define MINIMP3_NO_SIMD_WARNING
 #include "third_party/minimp3.h"
 #include "audio.h"
+#include "synth.h"
 #include "config.h"
 #include "plat/plat.h"
 #include <stdio.h>
@@ -31,11 +32,12 @@ static struct {
     int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME]; int pcm_n, pcm_pos, ch, rate;
     Snd wav; double wpos;
     float vol, target, rate_per_s;
-    int on;
+    int on, own;                        /* own: the menu's tune (synth.c), no file */
     double frac; int16_t prev[2], cur[2];
 } mu_;
 
-static const char *const NAMES[SFX_COUNT] = { "boot", "cursor", "select", "launch", "slam", "back", "bump", "tab", "whoosh", "open", "continue", "scroll", "error", "notch" };
+static const char *const NAMES[SFX_COUNT] = { "boot", "cursor", "select", "launch", "slam", "back", "bump", "tab", "whoosh", "open", "continue", "scroll", "error", "notch",
+                                               "key", "toggle", "close", "star", "done", "page", "wake", "bright" };
 
 /* ---- files ---- */
 
@@ -134,112 +136,9 @@ static int load_pack(const char *name, Snd *out) {
     return -1;
 }
 
-/* ---- the stand-ins: small synths tuned to sit near the DSi's sounds ---- */
+/* ---- the stand-ins: synth.c makes them ---- */
 
-static Snd alloc_snd(float seconds) { Snd s; s.frames = (int)(seconds * RATE); s.d = calloc((size_t)s.frames, 4); return s; }
-static void put(Snd *s, int i, float v) {
-    if (i < 0 || i >= s->frames) return;
-    int a = s->d[i * 2] + (int)(clampf(v, -1, 1) * 32767);
-    s->d[i * 2] = s->d[i * 2 + 1] = (int16_t)CLAMP(a, -32767, 32767);
-}
-/* a struck tone: sine with a little of its octave, exponential decay, a 2 ms attack */
-static void tone(Snd *s, float at, float f, float dur, float amp, float decay) {
-    int i0 = (int)(at * RATE), n = (int)(dur * RATE);
-    for (int i = 0; i < n; i++) {
-        float t = (float)i / RATE, env = expf(-t * decay) * MIN(1.0f, t / 0.002f);
-        float v = sinf(2 * PI_F * f * t) + 0.25f * sinf(4 * PI_F * f * t) * expf(-t * decay * 2);
-        put(s, i0 + i, v * env * amp);
-    }
-}
-/* a bell (two-operator FM): the boot chime */
-static void bell(Snd *s, float at, float f, float dur, float amp) {
-    int i0 = (int)(at * RATE), n = (int)(dur * RATE);
-    for (int i = 0; i < n; i++) {
-        float t = (float)i / RATE, env = expf(-t * 2.6f) * MIN(1.0f, t / 0.003f);
-        float mod = sinf(2 * PI_F * f * 3.5f * t) * 2.2f * expf(-t * 5);
-        put(s, i0 + i, sinf(2 * PI_F * f * t + mod) * env * amp);
-    }
-}
-static uint32_t nseed = 22222;
-static float noise(void) { nseed = nseed * 1664525u + 1013904223u; return (float)(nseed >> 8) / 8388608.0f - 1; }
-
-static void synth(int id, Snd *s) {
-    switch (id) {
-    case SFX_BOOT:      /* a bright two-note chime */
-        *s = alloc_snd(2.2f);
-        bell(s, 0, 1046.5f, 2.0f, 0.22f); bell(s, 0.0f, 1568.0f, 2.0f, 0.12f); bell(s, 0.11f, 2093.0f, 2.0f, 0.16f); bell(s, 0.11f, 2637.0f, 1.8f, 0.07f);
-        break;
-    case SFX_CURSOR:    /* a soft wooden pop */
-        *s = alloc_snd(0.09f);
-        for (int i = 0; i < s->frames; i++) {
-            float t = (float)i / RATE, f = 1500 + 900 * expf(-t * 120);
-            put(s, i, sinf(2 * PI_F * f * t) * expf(-t * 60) * 0.32f * MIN(1.0f, t / 0.0015f));
-        }
-        break;
-    case SFX_SELECT:    /* "pon": two bright notes */
-        *s = alloc_snd(0.35f);
-        tone(s, 0, 1318.5f, 0.3f, 0.26f, 14); tone(s, 0.045f, 1975.5f, 0.3f, 0.22f, 12);
-        break;
-    case SFX_LAUNCH:    /* a rising sparkle */
-        *s = alloc_snd(0.7f);
-        { static const float n[] = { 1046.5f, 1318.5f, 1568.0f, 2093.0f, 2637.0f }; for (int i = 0; i < 5; i++) tone(s, i * 0.055f, n[i], 0.4f, 0.18f, 9); }
-        for (int i = 0; i < (int)(0.35f * RATE); i++) { float t = (float)i / RATE; put(s, i, noise() * 0.05f * sinf(PI_F * t / 0.35f)); }
-        break;
-    case SFX_SLAM:      /* a thump with a click on top: the card going home */
-        *s = alloc_snd(0.45f);
-        for (int i = 0; i < s->frames; i++) {
-            float t = (float)i / RATE, f = 55 + 110 * expf(-t * 30);
-            float v = sinf(2 * PI_F * f * t) * expf(-t * 11) * 0.65f + noise() * expf(-t * 70) * 0.25f;
-            v += sinf(2 * PI_F * 2900 * t) * expf(-t * 160) * 0.18f + sinf(2 * PI_F * 4100 * (t - 0.012f)) * (t > 0.012f ? expf(-(t - 0.012f) * 220) : 0) * 0.12f;
-            put(s, i, v);
-        }
-        break;
-    case SFX_BACK:      /* two notes down */
-        *s = alloc_snd(0.25f);
-        tone(s, 0, 1174.7f, 0.2f, 0.22f, 18); tone(s, 0.06f, 880.0f, 0.2f, 0.2f, 18);
-        break;
-    case SFX_BUMP:      /* a dull bonk */
-        *s = alloc_snd(0.12f);
-        for (int i = 0; i < s->frames; i++) { float t = (float)i / RATE; put(s, i, (sinf(2 * PI_F * 230 * t) > 0 ? 0.5f : -0.5f) * sinf(2 * PI_F * 115 * t) * expf(-t * 40) * 0.35f); }
-        break;
-    case SFX_TAB:       /* a double tick */
-        *s = alloc_snd(0.14f);
-        tone(s, 0, 1760, 0.06f, 0.2f, 70); tone(s, 0.05f, 2349, 0.08f, 0.2f, 60);
-        break;
-    case SFX_WHOOSH:    /* air: noise swept through a resonator */
-        *s = alloc_snd(0.32f);
-        { float lp = 0, bp = 0;
-          for (int i = 0; i < s->frames; i++) {
-              float t = (float)i / RATE, fc = 400 + 3200 * t / 0.32f, k = 2 * sinf(PI_F * fc / RATE);
-              lp += k * bp; bp += k * (noise() - lp - 0.4f * bp);
-              put(s, i, bp * 0.22f * sinf(PI_F * t / 0.32f));
-          } }
-        break;
-    case SFX_OPEN:
-        *s = alloc_snd(0.2f);
-        tone(s, 0, 880, 0.15f, 0.18f, 20); tone(s, 0.05f, 1318.5f, 0.15f, 0.18f, 20);
-        break;
-    case SFX_CONTINUE:
-        *s = alloc_snd(0.45f);
-        tone(s, 0, 1568.0f, 0.4f, 0.22f, 9); tone(s, 0.07f, 2093.0f, 0.4f, 0.18f, 9);
-        break;
-    case SFX_SCROLL:
-        *s = alloc_snd(0.03f);
-        for (int i = 0; i < s->frames; i++) { float t = (float)i / RATE; put(s, i, sinf(2 * PI_F * 3000 * t) * expf(-t * 200) * 0.15f); }
-        break;
-    case SFX_NOTCH:     /* a firm little click: a detent */
-        *s = alloc_snd(0.05f);
-        for (int i = 0; i < s->frames; i++) {
-            float t = (float)i / RATE;
-            put(s, i, (sinf(2 * PI_F * 2400 * t) * 0.22f + noise() * 0.18f) * expf(-t * 260) + sinf(2 * PI_F * 620 * t) * expf(-t * 90) * 0.2f);
-        }
-        break;
-    case SFX_ERROR:
-        *s = alloc_snd(0.3f);
-        for (int i = 0; i < s->frames; i++) { float t = (float)i / RATE; put(s, i, (sinf(2 * PI_F * 196 * t) > 0 ? 0.25f : -0.25f) * expf(-t * 9)); }
-        break;
-    }
-}
+static void synth(int id, Snd *s) { s->d = synth_sfx(id, &s->frames); if (!s->d) s->frames = 0; }
 
 /* ---- mixing ---- */
 
@@ -282,7 +181,15 @@ static void mix(int16_t *buf, int frames) {
             vo->pos += vo->step;
         }
     }
-    if (mu_.on) {
+    if (mu_.on && mu_.own) {
+        /* the menu's own tune, made as it plays; the volume eased per block */
+        float g0 = mu_.vol;
+        if (mu_.vol != mu_.target) {
+            float d = mu_.rate_per_s * frames / RATE;
+            mu_.vol = mu_.vol < mu_.target ? MIN(mu_.target, mu_.vol + d) : MAX(mu_.target, mu_.vol - d);
+        }
+        if (g0 > 0.001f || mu_.vol > 0.001f) synth_music_render(acc, frames, (g0 + mu_.vol) * 0.5f * 0.55f);
+    } else if (mu_.on) {
         for (int i = 0; i < frames; i++) {
             /* the track's rate to ours: linear between its samples */
             double step = (mu_.wav.d ? RATE : (mu_.rate ? mu_.rate : RATE)) / (double)RATE;
@@ -339,7 +246,8 @@ void music_play(void) {
     snprintf(p, sizeof p, "%s/music.mp3", cfg.sounds);
     if (!mu_.file && (mu_.file = slurp(p, &len))) { mu_.len = len; mu_.off = 0; mp3dec_init(&mu_.dec); }
     if (!mu_.file && !mu_.wav.d) { snprintf(p, sizeof p, "%s/music.wav", cfg.sounds); load_wav(p, &mu_.wav); mu_.wpos = 0; }
-    if (mu_.file || mu_.wav.d) { mu_.on = 1; mu_.vol = 0; mu_.target = 0.55f; mu_.rate_per_s = 0.8f; mu_.ch = 0; }
+    if (mu_.file || mu_.wav.d) { mu_.on = 1; mu_.own = 0; mu_.vol = 0; mu_.target = 0.55f; mu_.rate_per_s = 0.8f; mu_.ch = 0; }
+    else { synth_music_reset(); mu_.on = 1; mu_.own = 1; mu_.vol = 0; mu_.target = 0.55f; mu_.rate_per_s = 0.4f; }
     pthread_mutex_unlock(&mu);
 }
 void music_fade(float target, float seconds) {

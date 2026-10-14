@@ -17,6 +17,14 @@ enum {
     SFX_SCROLL,     /* scroll.wav   the scroll bar */
     SFX_ERROR,      /* error.wav    */
     SFX_NOTCH,      /* notch.wav    the selection locking into the frame */
+    SFX_KEY,        /* key.wav      a key of the touch keyboard */
+    SFX_TOGGLE,     /* toggle.wav   an option switched (on; lower for off) */
+    SFX_CLOSE,      /* close.wav    a window closing */
+    SFX_STAR,       /* star.wav     a favourite */
+    SFX_DONE,       /* done.wav     something finished well (connected, art found, updated) */
+    SFX_PAGE,       /* page.wav     a page of a window, the album's pages */
+    SFX_WAKE,       /* wake.wav     the lid opened, the screens back on */
+    SFX_BRIGHT,     /* bright.wav   a brightness step */
     SFX_COUNT
 };
 
@@ -24,7 +32,7 @@ void audio_init(void);
 void sfx(int id);
 void sfx_pitch(int id, float pitch);        /* 1 = as is */
 void sfx_ex(int id, float pitch, float vol); /* vol 1 = as is */
-void music_play(void);                      /* music.mp3 / music.wav from the pack, looped; nothing without one */
+void music_play(void);                      /* music.mp3 / music.wav from the pack, looped; else the menu's own tune */
 void music_fade(float target, float seconds);
 void music_stop(void);
 int sound_from_pack(int id);                /* 1 when the pack has this sound */
