@@ -110,6 +110,7 @@ GBA)
     # the game's own emulator (the menu's game settings), else config.ini's, else mGBA; RetroArch's other settings
     # (screen size, smoothing, resume, rewind, run-ahead) are read by ROCKNIX's launcher from system.cfg itself
     CORE=$(grep -F "gba[\"$GAME\"].core=" $CFG 2>/dev/null | tail -n1 | cut -d= -f2)
+    [ -n "$CORE" ] || CORE=$(sysconf gba.core)       # the menu's Emulator settings (and ES's system setting)
     [ -n "$CORE" ] || CORE=$(conf gba_core); [ -n "$CORE" ] || CORE=mgba
     EMU=$(conf gba_emulator); [ -n "$EMU" ] || EMU=retroarch
     echo "$(up) RetroArch ($CORE)"
