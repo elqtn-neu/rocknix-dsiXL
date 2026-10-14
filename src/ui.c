@@ -21,10 +21,16 @@
 #include "rumble.h"
 #include "gamecfg.h"
 #include "power.h"
+#include "job.h"
+#include "panels.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <glob.h>
+#include <ctype.h>
+#include <time.h>
+#include <limits.h>
 
 enum { ST_BOOT, ST_MENU, ST_LAUNCH };
 
@@ -816,7 +822,7 @@ static void err_close(void) { err_open = 0; sfx(SFX_BACK); last_input = T; }
 
 /* ---- the battery: a notice on the top screen when it runs low, and when the charger goes in ---- */
 
-static double note_t = -10; static char note_txt[64]; static int note_kind;   /* 0 low, 1 charging */
+static double note_t = -10; static char note_txt[64]; static int note_kind;   /* 0 battery low, 1 charging, 2 done (a tick), 3 Wi-Fi */
 static void notice(int kind, const char *txt) { note_kind = kind; note_t = T; snprintf(note_txt, sizeof note_txt, "%s", txt); }
 static void battery_watch(void) {
     static double at = -10; static int prev = -1, prev_chg = -1;
@@ -840,25 +846,46 @@ static void draw_notice(Surf *s) {
     int tw = text_w(font, note_txt), w = tw + 40, x = 128 - w / 2;
     float y = 160 + (1 - in_k) * 40;
     rrect(s, x + 1, y + 2, w, 22, 9, 0x000000, a * 40 / 255);
-    rrect(s, x, y, w, 22, 9, note_kind ? 0x6aa84f : 0xd8452e, a);
+    rrect(s, x, y, w, 22, 9, note_kind == 0 ? 0xd8452e : note_kind == 3 ? accent().base : 0x6aa84f, a);
     rrect_vgrad(s, x + 1, y + 1, w - 2, 20, 8, 0xffffff, 0xeeeeee, a);
-    /* a battery: red and blinking when low, filling up when charging */
     int bx = x + 9, by = (int)y + 7;
-    rect_blend(s, bx, by + 2, 2, 4, 0x505050, a); rect_blend(s, bx + 2, by, 14, 9, 0x505050, a); rect_blend(s, bx + 3, by + 1, 12, 7, 0xffffff, a);
-    if (note_kind) { int f = ((int)(k * 3)) % 5; for (int i = 0; i < f; i++) rect_blend(s, bx + 12 - i * 3, by + 2, 2, 5, 0x6aa84f, a); }
-    else if (((int)(k * 3)) & 1) rect_blend(s, bx + 12, by + 2, 2, 5, 0xd8452e, a);
+    if (note_kind <= 1) {
+        /* a battery: red and blinking when low, filling up when charging */
+        rect_blend(s, bx, by + 2, 2, 4, 0x505050, a); rect_blend(s, bx + 2, by, 14, 9, 0x505050, a); rect_blend(s, bx + 3, by + 1, 12, 7, 0xffffff, a);
+        if (note_kind) { int f = ((int)(k * 3)) % 5; for (int i = 0; i < f; i++) rect_blend(s, bx + 12 - i * 3, by + 2, 2, 5, 0x6aa84f, a); }
+        else if (((int)(k * 3)) & 1) rect_blend(s, bx + 12, by + 2, 2, 5, 0xd8452e, a);
+    } else if (note_kind == 2) {
+        for (int i = 0; i < 4; i++) { rect_blend(s, bx + 2 + i, by + 3 + i, 2, 2, 0x3a9a3a, a); }
+        for (int i = 0; i < 7; i++) { rect_blend(s, bx + 5 + i, by + 6 - i, 2, 2, 0x3a9a3a, a); }
+    } else {
+        /* Wi-Fi: three arcs and a dot */
+        for (int r = 0; r < 3; r++) for (int i = -3 - r; i <= 3 + r; i++) {
+            float yy = by + 9 - sqrtf((float)((4 + r * 3) * (4 + r * 3) - i * i));
+            pblend(s, bx + 7 + i, (int)yy, accent().base, a);
+        }
+        rect_blend(s, bx + 6, by + 8, 2, 2, accent().base, a);
+    }
     text(s, font, x + 30, (int)y + (font == FONT_SM ? 3 : 1), C_TEXT, a, note_txt);
 }
 
 /* ---- the options window ---- */
 
-enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER, OPT_COUNT };
+enum { OPT_EMU, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE, OPT_RESCAN, OPT_ES, OPT_POWER,
+       OPT_WIFI, OPT_TZ, OPT_ART, OPT_UPDATE, OPT_COUNT };
+static void flows_on_options_open(void);
+static void opt_label_more(int i, char *b, int n);
+static void opt_act_more(int i);
+static int update_found(void);
 
 static void opt_build(void) {
+    static const int order[] = { OPT_EMU, OPT_ART, OPT_WIFI, OPT_TZ, OPT_COLOR, OPT_CLOCK, OPT_SFX, OPT_MUSIC, OPT_RUMBLE,
+                                 OPT_RESCAN, OPT_ES, OPT_POWER };
     optn = 0;
-    for (int i = 0; i < OPT_COUNT; i++) optv[optn++] = i;
+    if (update_found()) optv[optn++] = OPT_UPDATE;      /* a newer release on the card: first */
+    for (int i = 0; i < ARRAY_LEN(order); i++) optv[optn++] = order[i];
 }
 static void opt_open_now(void) {
+    flows_on_options_open();
     opt_build();
     opt_open = 1; opt_t = T; opt_sel = 0; opt_scroll.x = 0; opt_scroll.v = 0;
     sfx(SFX_OPEN);
@@ -876,6 +903,7 @@ static void opt_label(int i, char *b, int n) {
     case OPT_RESCAN: snprintf(b, (size_t)n, "Look for new games"); break;
     case OPT_ES: snprintf(b, (size_t)n, "Exit to EmulationStation"); break;
     case OPT_POWER: snprintf(b, (size_t)n, "Power off"); break;
+    default: opt_label_more(i, b, n); break;
     }
 }
 
@@ -899,6 +927,7 @@ static void opt_act(int i, int dir) {
         break;
     case OPT_ES: sfx(SFX_SELECT); exit_code = EXIT_TO_ES; break;
     case OPT_POWER: sfx(SFX_SELECT); exit_code = EXIT_POWEROFF; break;
+    default: opt_act_more(i); break;
     }
 }
 
@@ -1179,6 +1208,421 @@ static void draw_boot(Surf *top, Surf *bot, float t) {
     if (black) { rect_blend(top, 0, 0, 256, 192, 0x000000, black); rect_blend(bot, 0, 0, 256, 192, 0x000000, black); }
 }
 
+/* ---- Wi-Fi, the time zone, getting art, updating: what runs in the background, and the windows that ask ---- */
+
+enum { F_NONE, F_BUSY, F_PICK, F_KBD };
+enum { K_WIFI_ON, K_WIFI_SCAN, K_WIFI_LIST, K_WIFI_PASS, K_WIFI_JOIN, K_WIFI_OFF, K_TZ_REGION, K_TZ_CITY, K_TZ_SET, K_ART, K_UPDATE };
+static int flow, flow_kind;
+static Job fjob, netjob, artjob;
+static Picker pk; static Kbd kb;
+static float busy_anim, busy_prog = -1; static char busy1[80], busy2[120];
+static int wifi_state; static char wifi_ssid[64];     /* 0 not known yet, 1 connected, 2 not connected, 3 off, 4 no Wi-Fi */
+static char join_ssid[72];
+static char tz_region[40];
+static char upd_zip[400], upd_ver[32]; static double upd_checked = -100;
+static int art_shown, art_found; static long art_off; static char art_line[160]; static double art_poll_t;
+
+static void script_path(char *out, int n, const char *name) { snprintf(out, (size_t)n, "%s/%s", cfg.home, name); }
+static int have_script(const char *name) { char p[400]; script_path(p, sizeof p, name); return !access(p, X_OK); }
+/* a word for the shell: 'it''s' */
+static void shq(char *out, int n, const char *str) {
+    int o = 0;
+    if (o < n - 1) out[o++] = '\'';
+    for (; *str && o < n - 6; str++) {
+        if (*str == '\'') { memcpy(out + o, "'\\''", 4); o += 4; } else out[o++] = *str;
+    }
+    if (o < n - 1) out[o++] = '\'';
+    out[o] = 0;
+}
+static void run_script(Job *j, const char *tag, const char *name, const char *a1, const char *a2, const char *a3) {
+    char p[400], q[3][300] = { "", "", "" }, cmd[1400];
+    script_path(p, sizeof p, name);
+    const char *a[3] = { a1, a2, a3 };
+    for (int i = 0; i < 3; i++) if (a[i]) shq(q[i], sizeof q[i], a[i]);
+    char sp[420]; shq(sp, sizeof sp, p);
+    snprintf(cmd, sizeof cmd, "%s %s %s %s", sp, q[0], q[1], q[2]);
+    job_start(j, tag, cmd);
+}
+static void busy(int kind, const char *l1, const char *l2) {
+    flow = F_BUSY; flow_kind = kind; busy_prog = -1;
+    snprintf(busy1, sizeof busy1, "%s", l1); snprintf(busy2, sizeof busy2, "%s", l2 ? l2 : "");
+}
+static void flow_end(void) { flow = F_NONE; last_input = T; }
+static void say_error(const char *title, const char *msg) {
+    snprintf(err_title, sizeof err_title, "%s", title); snprintf(err_msg, sizeof err_msg, "%s", msg);
+    err_open = 1; sfx(SFX_ERROR); rumble_double(20, 0.5f);
+}
+/* the last line a job printed (for an error) */
+static void job_last_line(const Job *j, char *out, int n) {
+    char buf[1024]; job_output(j, buf, sizeof buf);
+    int l = (int)strlen(buf);
+    while (l > 0 && (buf[l - 1] == '\n' || buf[l - 1] == ' ')) buf[--l] = 0;
+    char *nl = strrchr(buf, '\n');
+    snprintf(out, (size_t)n, "%s", nl ? nl + 1 : buf);
+}
+
+/* ---- Wi-Fi ---- */
+
+static void wifi_parse_status(const char *o) {
+    char st[32] = "", ss[64] = "";
+    sscanf(o, "%31[^\t\n]\t%63[^\t\n]", st, ss);
+    wifi_state = !strcmp(st, "connected") ? 1 : !strcmp(st, "disconnected") ? 2 : !strcmp(st, "off") ? 3 : !strcmp(st, "none") ? 4 : 0;
+    snprintf(wifi_ssid, sizeof wifi_ssid, "%s", wifi_state == 1 ? ss : "");
+}
+static void wifi_status_poll(void) {
+    if (netjob.pid && !job_running(&netjob)) { char o[256]; job_output(&netjob, o, sizeof o); wifi_parse_status(o); }
+}
+static void wifi_scan(void) {
+    busy(K_WIFI_SCAN, "Looking for networks\xe2\x80\xa6", "");
+    run_script(&fjob, "net", "net.sh", "scan", 0, 0);
+}
+static void wifi_list(const char *out) {
+    picker_open(&pk, "Wi-Fi", "Choose your network. Those with a padlock need a password; it's remembered for next time.");
+    flow = F_PICK; flow_kind = K_WIFI_LIST;
+    char buf[8192]; snprintf(buf, sizeof buf, "%s", out);
+    for (char *ln = strtok(buf, "\n"); ln; ln = strtok(0, "\n")) {
+        int sig, sec, use; char ss[72];
+        if (sscanf(ln, "%d\t%d\t%d\t%71[^\n]", &sig, &sec, &use, ss) != 4) continue;
+        PickItem *it = picker_add(&pk, ss);
+        it->sig = CLAMP((sig + 12) / 25, 0, 4); it->lock = sec; it->check = use;
+        if (use) pk.sel = pk.n - 1;
+    }
+    snprintf(picker_add(&pk, "Look again")->note, sizeof pk.it[0].note, "%s", "");
+    if (wifi_state != 3) picker_add(&pk, "Turn Wi-Fi off");
+}
+static void wifi_join(const char *ssid_in, const char *psk) {
+    char ssid[72]; snprintf(ssid, sizeof ssid, "%s", ssid_in);      /* (it may be join_ssid itself) */
+    snprintf(join_ssid, sizeof join_ssid, "%s", ssid);
+    char l2[120]; snprintf(l2, sizeof l2, "%s", ssid);
+    busy(K_WIFI_JOIN, "Connecting\xe2\x80\xa6", l2);
+    run_script(&fjob, "net", "net.sh", "connect", ssid, psk ? psk : "");
+}
+static void wifi_open(void) {
+    opt_open = 0; opt_t = T;
+    if (!have_script("net.sh")) { say_error("Wi-Fi isn't available.", "This only works on the handheld (net.sh is missing)."); return; }
+    if (wifi_state == 4) { say_error("No Wi-Fi here.", "The handheld's Wi-Fi didn't answer. Try again after a restart."); return; }
+    if (wifi_state == 3) { busy(K_WIFI_ON, "Turning Wi-Fi on\xe2\x80\xa6", ""); run_script(&fjob, "net", "net.sh", "on", 0, 0); return; }
+    wifi_scan();
+}
+
+/* ---- the time zone ---- */
+
+static void tz_now(char *out, int n) {
+    const char *e = getenv("TZ");
+    if (e && *e == ':') { snprintf(out, (size_t)n, "%s", e + 1); return; }
+    char rp[PATH_MAX];
+    const char *z = realpath("/etc/localtime", rp) ? strstr(rp, "zoneinfo/") : 0;
+    snprintf(out, (size_t)n, "%s", z ? z + 9 : "UTC");
+}
+static void tz_list(const char *region) {
+    char p[400]; snprintf(p, sizeof p, "%s/assets/timezones.txt", cfg.home);
+    FILE *f = fopen(p, "r");
+    char cur[96]; tz_now(cur, sizeof cur);
+    if (!region) {
+        picker_open(&pk, "Time zone", "Where you are: first the part of the world, then the city whose time you keep.");
+        flow = F_PICK; flow_kind = K_TZ_REGION;
+    } else {
+        picker_open(&pk, region, "The city whose time you keep (or the nearest one in your time zone).");
+        flow = F_PICK; flow_kind = K_TZ_CITY;
+    }
+    char line[96], last[40] = "";
+    while (f && fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        char reg[40]; snprintf(reg, sizeof reg, "%s", line); char *sl = strchr(reg, '/'); if (sl) *sl = 0;
+        if (!region) {
+            if (strcmp(reg, last)) {
+                snprintf(last, sizeof last, "%s", reg);
+                PickItem *it = picker_add(&pk, reg);
+                if (!strncmp(cur, reg, strlen(reg))) { it->check = 1; pk.sel = pk.n - 1; }
+            }
+        } else if (!strcmp(reg, region) && sl) {
+            char lab[72]; snprintf(lab, sizeof lab, "%s", line + strlen(reg) + 1);
+            for (char *c = lab; *c; c++) { if (*c == '_') *c = ' '; }
+            PickItem *it = picker_add(&pk, lab);
+            if (!strcmp(cur, line)) { it->check = 1; pk.sel = pk.n - 1; }
+        }
+    }
+    if (f) fclose(f);
+}
+static void tz_set(const char *zone) {
+    char z[96]; snprintf(z, sizeof z, ":%s", zone);
+    if (have_script("net.sh")) { busy(K_TZ_SET, "Setting the time zone\xe2\x80\xa6", zone); run_script(&fjob, "net", "net.sh", "tz", zone, 0); }
+    setenv("TZ", z, 1); tzset();
+    if (!have_script("net.sh")) { char m[96]; snprintf(m, sizeof m, "Time zone: %s", strchr(zone, '/') ? strrchr(zone, '/') + 1 : zone); notice(2, m); }
+}
+
+/* ---- getting art ---- */
+
+static void art_start(void) {
+    opt_open = 0; opt_t = T;
+    if (job_running(&artjob)) { art_shown = 1; flow = F_BUSY; flow_kind = K_ART; return; }
+    if (wifi_state == 2 || wifi_state == 3 || wifi_state == 4) {
+        say_error("Not connected to the internet.", "Art comes from the internet: connect to Wi-Fi first (Options > Wi-Fi).");
+        return;
+    }
+    char sp[400]; script_path(sp, sizeof sp, "dsixl-scrape.py");
+    if (access(sp, R_OK)) { snprintf(sp, sizeof sp, "%s/tools/dsixl-scrape.py", cfg.home); }
+    char q[420], h[300], cmd[900]; shq(q, sizeof q, sp); shq(h, sizeof h, cfg.home);
+    snprintf(cmd, sizeof cmd, "DSIXL_HOME=%s exec python3 -u %s --progress", h, q);
+    if (job_start(&artjob, "art", cmd)) { say_error("Couldn't get art.", "The art script didn't start."); return; }
+    art_off = 0; art_found = 0; art_shown = 1;
+    busy(K_ART, "Getting art\xe2\x80\xa6", "Starting");
+}
+/* a game's art arrived: it's loaded again, and its cartridge gives a little jump */
+static void art_arrived(const char *sysname, const char *base) {
+    int s = !strcmp(sysname, "gba") ? SYS_GBA : SYS_NDS;
+    for (int i = 0; i < lib[s].n; i++) {
+        Game *g = &lib[s].g[i];
+        if (strcmp(g->base, base)) continue;
+        cart_free(g); game_free_art(g); g->tint_state = 0;
+        for (int v = 0; v < V_COUNT; v++) for (int k = 0; k < vn(v); k++) if (vg(v, k) == g) fx_of(v, k)->wob.v += 10;
+        if (g == cur_game(sys)) { logo_prev = 0; logo_t = T; }
+    }
+}
+static void art_poll(void) {
+    if (!artjob.pid && !art_off) return;
+    int running = job_running(&artjob);
+    if (running && T - art_poll_t < 0.2) return;
+    art_poll_t = T;
+    FILE *f = fopen(artjob.out, "rb");
+    if (f) {
+        fseek(f, art_off, SEEK_SET);
+        char line[600];
+        while (fgets(line, sizeof line, f)) {
+            if (!strchr(line, '\n') && running) break;              /* a line still being written */
+            art_off = ftell(f);
+            line[strcspn(line, "\n")] = 0;
+            if (line[0] != '@') { if (line[0]) snprintf(art_line, sizeof art_line, "%s", line + strspn(line, " ")); continue; }
+            char *fld[8]; int nf = 0;
+            for (char *t = strtok(line, "\t"); t && nf < 8; t = strtok(0, "\t")) fld[nf++] = t;
+            if (nf >= 4 && !strcmp(fld[1], "download")) {
+                snprintf(busy1, sizeof busy1, "Downloading the games database");
+                snprintf(busy2, sizeof busy2, "%s of %s MB (once a month)", fld[2], fld[3]);
+                busy_prog = atof(fld[3]) > 0 ? (float)(atof(fld[2]) / atof(fld[3])) : -1;
+            } else if (nf >= 2 && !strcmp(fld[1], "reading")) {
+                snprintf(busy1, sizeof busy1, "Reading the games database");
+                snprintf(busy2, sizeof busy2, "A minute or two");
+                busy_prog = -1;
+            } else if (nf >= 7 && !strcmp(fld[1], "game")) {
+                snprintf(busy1, sizeof busy1, "Getting art: %s of %s", fld[3], fld[4]);
+                snprintf(busy2, sizeof busy2, "%s", fld[5]);
+                busy_prog = atof(fld[4]) > 0 ? (float)(atof(fld[3]) / atof(fld[4])) : -1;
+                if (atoi(fld[6]) > 0) { art_found++; art_arrived(fld[2], fld[5]); }
+            }
+        }
+        fclose(f);
+    }
+    if (!running) {
+        art_off = 0;
+        if (flow == F_BUSY && flow_kind == K_ART) flow_end();
+        art_shown = 0;
+        if (artjob.rc == 0) {
+            char m[80]; snprintf(m, sizeof m, art_found == 1 ? "New art for 1 game" : "New art for %d games", art_found);
+            notice(2, art_found ? m : "No new art found");
+            sfx_pitch(SFX_SELECT, 1.2f);
+        } else {
+            char m[300]; snprintf(m, sizeof m, "The art script stopped (error %d): %s", artjob.rc, art_line);
+            say_error("Couldn't get all the art.", m);
+        }
+    }
+}
+
+/* ---- updating: a newer release's zip on the games card ---- */
+
+static int ver_cmp(const char *a, const char *b) {
+    while (*a || *b) {
+        long x = strtol(a, (char **)&a, 10), y = strtol(b, (char **)&b, 10);
+        if (x != y) return x < y ? -1 : 1;
+        if (*a == '.') a++;
+        if (*b == '.') b++;
+        if (!isdigit((unsigned char)*a) && !isdigit((unsigned char)*b)) break;
+    }
+    return 0;
+}
+static int update_found(void) {
+    if (T - upd_checked < 30) return upd_zip[0] != 0;
+    upd_checked = T; upd_zip[0] = 0;
+    const char *dirs[] = { getenv("DSIXL_UPDATE_DIR"), "/storage/roms/ports", "/storage/roms", "/storage/games-external", "/storage/games-external/roms/ports" };
+    for (int d = 0; d < ARRAY_LEN(dirs); d++) {
+        if (!dirs[d] || !*dirs[d]) continue;
+        char pat[400]; snprintf(pat, sizeof pat, "%s/dsixl-*.zip", dirs[d]);
+        glob_t g;
+        if (glob(pat, 0, 0, &g)) continue;
+        for (size_t i = 0; i < g.gl_pathc; i++) {
+            const char *v = strrchr(g.gl_pathv[i], '/') + 7;
+            char ver[32]; snprintf(ver, sizeof ver, "%.*s", (int)(strlen(v) - 4), v);
+            if (ver_cmp(ver, DSIXL_VERSION) > 0 && (!upd_zip[0] || ver_cmp(ver, upd_ver) > 0)) {
+                snprintf(upd_zip, sizeof upd_zip, "%s", g.gl_pathv[i]); snprintf(upd_ver, sizeof upd_ver, "%s", ver);
+            }
+        }
+        globfree(&g);
+    }
+    return upd_zip[0] != 0;
+}
+static void update_start(void) {
+    opt_open = 0; opt_t = T;
+    if (!have_script("update.sh")) { say_error("Can't update from here.", "This only works on the handheld (update.sh is missing)."); return; }
+    char l1[80]; snprintf(l1, sizeof l1, "Updating to %s\xe2\x80\xa6", upd_ver);
+    busy(K_UPDATE, l1, "Don't turn the handheld off.");
+    run_script(&fjob, "update", "update.sh", upd_zip, 0, 0);
+}
+
+/* ---- the options' part ---- */
+
+static void flows_on_options_open(void) {
+    if (have_script("net.sh") && !job_running(&netjob)) run_script(&netjob, "netstatus", "net.sh", "status", 0, 0);
+}
+static void opt_label_more(int i, char *b, int n) {
+    switch (i) {
+    case OPT_WIFI:
+        if (wifi_state == 1) snprintf(b, (size_t)n, "Wi-Fi: %s", wifi_ssid);
+        else snprintf(b, (size_t)n, "Wi-Fi: %s", wifi_state == 2 ? "Not connected" : wifi_state == 3 ? "Off" : wifi_state == 4 ? "None" : "\xe2\x80\xa6");
+        break;
+    case OPT_TZ: {
+        char z[96]; tz_now(z, sizeof z);
+        const char *c = strrchr(z, '/'); char city[64]; snprintf(city, sizeof city, "%s", c ? c + 1 : z);
+        for (char *p = city; *p; p++) if (*p == '_') *p = ' ';
+        snprintf(b, (size_t)n, "Time zone: %s", city);
+        break;
+    }
+    case OPT_ART:
+        if (job_running(&artjob)) snprintf(b, (size_t)n, "Getting art\xe2\x80\xa6 (see how it goes)");
+        else snprintf(b, (size_t)n, "Get art from the internet");
+        break;
+    case OPT_UPDATE: snprintf(b, (size_t)n, "Update to %s", upd_ver); break;
+    }
+}
+static void opt_act_more(int i) {
+    switch (i) {
+    case OPT_WIFI: sfx(SFX_SELECT); wifi_open(); break;
+    case OPT_TZ: sfx(SFX_SELECT); opt_open = 0; opt_t = T; tz_list(0); break;
+    case OPT_ART: sfx(SFX_SELECT); art_start(); break;
+    case OPT_UPDATE: sfx(SFX_SELECT); update_start(); break;
+    }
+}
+
+/* ---- each frame ---- */
+
+static PanelIn panel_in(void) {
+    static int was, x0, y0, moved;
+    PanelIn p; memset(&p, 0, sizeof p);
+    p.t = T; p.a = btn_a(); p.b = btn_b();
+    for (int b = 0; b < B_COUNT; b++) { if (pressed(b)) p.pressed |= BIT(b); if (repeat(b)) p.repeat |= BIT(b); }
+    int d = in.touch[1];
+    if (d && !was) { p.began = 1; x0 = in.tx[1]; y0 = in.ty[1]; moved = 0; tap_burst(1, (float)x0, (float)y0); }
+    if (d && (abs(in.tx[1] - x0) > 4 || abs(in.ty[1] - y0) > 4)) moved = 1;
+    if (!d && was) p.ended = 1;
+    p.down = d; p.moved = moved; p.x = d ? in.tx[1] : tch.x; p.y = d ? in.ty[1] : tch.y; p.x0 = x0; p.y0 = y0;
+    if (d) { tch.x = in.tx[1]; tch.y = in.ty[1]; }
+    was = d;
+    return p;
+}
+
+static void flow_job_done(void) {
+    char o[8192]; job_output(&fjob, o, sizeof o);
+    int rc = fjob.rc;
+    switch (flow_kind) {
+    case K_WIFI_ON: wifi_parse_status(o); wifi_scan(); break;
+    case K_WIFI_SCAN: wifi_list(o); break;
+    case K_WIFI_JOIN:
+        flow_end();
+        if (rc == 0 && strstr(o, "ok")) {
+            wifi_state = 1; snprintf(wifi_ssid, sizeof wifi_ssid, "%s", join_ssid);
+            char m[96]; snprintf(m, sizeof m, "Connected to %s", join_ssid); notice(3, m); sfx_pitch(SFX_SELECT, 1.2f);
+        } else {
+            char m[200]; snprintf(m, sizeof m, "Check the password for \xe2\x80\x9c%s\xe2\x80\x9d, and that the network is in reach.", join_ssid);
+            say_error("Couldn't connect.", m);
+        }
+        run_script(&netjob, "netstatus", "net.sh", "status", 0, 0);
+        break;
+    case K_WIFI_OFF: flow_end(); wifi_parse_status(o); notice(3, "Wi-Fi off"); break;
+    case K_TZ_SET: {
+        flow_end();
+        char z[96]; tz_now(z, sizeof z);
+        if (rc == 0) { char m[96]; snprintf(m, sizeof m, "Time zone: %s", strchr(z, '/') ? strrchr(z, '/') + 1 : z); notice(2, m); }
+        else { char m[200]; job_last_line(&fjob, m, sizeof m); say_error("Couldn't set the time zone.", m); }
+        break;
+    }
+    case K_UPDATE:
+        if (rc == 0) { exit_code = EXIT_QUIT; flow_end(); }     /* the session starts the new menu */
+        else { flow_end(); char m[300]; job_last_line(&fjob, m, sizeof m); say_error("The update didn't work.", m); }
+        break;
+    default: flow_end(); break;
+    }
+}
+
+static void flow_pick(int r) {
+    if (r == -2) { flow_end(); if (flow_kind == K_TZ_CITY) tz_list(0); return; }
+    PickItem *it = &pk.it[r];
+    switch (flow_kind) {
+    case K_WIFI_LIST:
+        if (!strcmp(it->label, "Look again") && it->sig < 0) wifi_scan();
+        else if (!strcmp(it->label, "Turn Wi-Fi off") && it->sig < 0) { busy(K_WIFI_OFF, "Turning Wi-Fi off\xe2\x80\xa6", ""); run_script(&fjob, "net", "net.sh", "off", 0, 0); }
+        else if (it->check) { flow_end(); char m[96]; snprintf(m, sizeof m, "Connected to %s", it->label); notice(3, m); }
+        else if (it->lock) {
+            snprintf(join_ssid, sizeof join_ssid, "%s", it->label);
+            char pr[120]; snprintf(pr, sizeof pr, "The password for \xe2\x80\x9c%s\xe2\x80\x9d", it->label);
+            kbd_open(&kb, "Wi-Fi password", pr, "");
+            flow = F_KBD; flow_kind = K_WIFI_PASS;
+        } else wifi_join(it->label, 0);
+        break;
+    case K_TZ_REGION: snprintf(tz_region, sizeof tz_region, "%s", it->label); if (!strcmp(it->label, "UTC")) { flow_end(); tz_set("UTC"); } else tz_list(tz_region); break;
+    case K_TZ_CITY: {
+        char z[96]; snprintf(z, sizeof z, "%s/%s", tz_region, it->label);
+        for (char *c = z; *c; c++) if (*c == ' ') *c = '_';
+        flow_end(); tz_set(z);
+        break;
+    }
+    default: flow_end(); break;
+    }
+}
+
+static void flow_update(float dt) {
+    PanelIn pi = panel_in();
+    switch (flow) {
+    case F_BUSY:
+        if (flow_kind == K_ART) {
+            /* getting art goes on by itself: B puts the window away (Options > Get art brings it back) */
+            if (pressed(btn_b()) || (pi.ended && !pi.moved)) { art_shown = 0; flow_end(); sfx(SFX_BACK); }
+        } else if (!job_running(&fjob)) flow_job_done();
+        break;
+    case F_PICK: { int r = picker_update(&pk, &pi, dt); if (r != -1) flow_pick(r); break; }
+    case F_KBD: {
+        int r = kbd_update(&kb, &pi, dt);
+        if (r == 1) wifi_join(join_ssid, kb.text);
+        else if (r == 0) { flow_end(); wifi_scan(); }
+        break;
+    }
+    }
+}
+
+/* every frame, whatever else is going on: the windows animate, the jobs are watched */
+static void flows_step(float dt) {
+    static const PanelIn none;
+    PanelIn idle = none; idle.t = T;
+    if (flow != F_PICK) picker_update(&pk, &idle, dt);
+    if (flow != F_KBD) kbd_update(&kb, &idle, dt);
+    busy_anim = clampf(busy_anim + (flow == F_BUSY ? dt : -dt) / 0.2f, 0, 1);
+    wifi_status_poll();
+    art_poll();
+}
+static void flows_draw(Surf *bot, Surf *top) {
+    picker_draw(&pk, bot, top);
+    kbd_draw(&kb, bot, top);
+    busy_draw(bot, busy1, busy2, T, busy_anim, busy_prog);
+    if (flow == F_BUSY && flow_kind == K_ART && busy_anim > 0.5f)
+        text_center(bot, FONT_SM, 128, 176, 0xffffff, (int)(255 * busy_anim), "B: carry on in the background");
+}
+/* art coming in the background: a small turning mark in the top screen's corner */
+static void flows_draw_top(Surf *top) {
+    if (!job_running(&artjob) || flow == F_BUSY) return;
+    Accent ac = accent();
+    for (int i = 0; i < 8; i++) {
+        float an = i * PI_F / 4; int lead = ((int)(T * 10)) % 8, age = (lead - i + 8) % 8;
+        disc(top, 28 + cosf(an) * 4, 8 + sinf(an) * 4, 1.2f, col_mix(ac.base, 0xffffff, MIN(220, age * 32)), 255);
+    }
+}
+
 /* ---- init ---- */
 
 void ui_init(const UiStart *st) {
@@ -1186,6 +1630,9 @@ void ui_init(const UiStart *st) {
     snprintf(p, sizeof p, "%s/assets/boot_logo.png", cfg.home);
     img_load(p, &boot_logo);
     bri_lv = bri_from_system();
+    /* just updated (update.sh leaves the version) */
+    FILE *uf = fopen("/tmp/dsixl-updated", "r");
+    if (uf) { char v[32] = ""; if (fgets(v, sizeof v, uf)) { v[strcspn(v, "\n")] = 0; char m[64]; snprintf(m, sizeof m, "Updated to %s", v); notice(2, m); } fclose(uf); remove("/tmp/dsixl-updated"); }
     for (int s = 0; s < SYS_COUNT; s++) {
         row[s].sel = 0;
         for (int i = 0; i < lib[s].n; i++) if (!strcmp(lib[s].g[i].file, cfg.last[s])) row[s].sel = i;
@@ -1419,7 +1866,8 @@ static void toggle_fav(void) {
 }
 
 static void menu_update(float dt) {
-    if (err_open) { if (pressed(btn_a()) || pressed(btn_b()) || pressed(B_START)) err_close(); }
+    if (flow != F_NONE && !err_open) flow_update(dt);
+    else if (err_open) { if (pressed(btn_a()) || pressed(btn_b()) || pressed(B_START)) err_close(); }
     else if (gs_open) gs_update();
     else if (opt_open) {
         if (repeat(B_UP)) { opt_sel = (opt_sel + optn - 1) % optn; sfx(SFX_CURSOR); }
@@ -1471,7 +1919,7 @@ static void menu_update(float dt) {
         }
         if (pressed(B_Y) && vn(sys)) toggle_fav();
     }
-    touch_update();
+    if (flow == F_NONE) touch_update();
     /* a flick coasts on, slowing, ticking past each cartridge, then settles on one */
     if (coast && vn(sys)) {
         Row *r = &row[sys];
@@ -1643,7 +2091,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         in.held = 0; in.touch[0] = in.touch[1] = 0;
     }
     T += dt; st_t += dt;
-    if (in.quit) return EXIT_QUIT;
+    if (in.quit) { job_stop(&artjob); return EXIT_QUIT; }
     float fdt = (float)MIN(dt, 0.05);
     rumble_tick();
     parts_step(fdt);
@@ -1685,8 +2133,10 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         menu_update(fdt);
         bri_poll_step();
         battery_watch();
+        flows_step(fdt);
         if (!rg && err_pending) { err_pending = 0; err_open = 1; sfx(SFX_ERROR); rumble_double(20, 0.5f); }
         if (!rg && rescued) { rescued = 0; notice(0, "Game saved: battery at 3%"); }
+        { static int announced; if (!rg && !announced && st_t > 1.2 && T - note_t > 4) { announced = 1; if (update_found()) { char m[64]; snprintf(m, sizeof m, "Update %s ready: see Options", upd_ver); notice(2, m); } } }
         if (auto_go_t > 0 && T >= auto_go_t) { auto_go_t = -1; if (sys == V_FAV && has_cont && row[V_FAV].sel == 0 && !opt_open && !gs_open) start_launch(); }
     }
     tint_step(fdt);
@@ -1722,7 +2172,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         } else draw_logo(top, logo_cur, ka * intro, sc, (1 - intro) * 20, cfg.top_view);
     }
     snow(top, fdt);
-    if (state == ST_MENU) { draw_bri_bar(top); draw_notice(top); }
+    if (state == ST_MENU) { draw_bri_bar(top); draw_notice(top); flows_draw_top(top); }
 
     /* ---- bottom ---- */
     if (state == ST_LAUNCH) {
@@ -1771,6 +2221,7 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         if (state == ST_MENU && !gs_open) { draw_gear_button(bot, (int)(255 * intro * (1 - gs_anim))); draw_sun_button(bot, (int)(255 * intro * (1 - gs_anim))); }
         draw_game_settings(bot, top, gs_anim);
         draw_options(bot, opt_anim);
+        flows_draw(bot, top);
         draw_error(bot, err_anim);
     }
 
@@ -1800,13 +2251,13 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             int a = (int)(255 * ease_in_out((t - L_FADE) / (L_END - 0.12f - L_FADE)));
             rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
         }
-        if (t >= L_END) { write_launch(); return EXIT_LAUNCH; }
+        if (t >= L_END) { write_launch(); job_stop(&artjob); return EXIT_LAUNCH; }
     }
     if (wake_black && T - wake_t < 0.35) {
         int a = (int)(255 * (1 - ease_out_cubic((float)((T - wake_t) / 0.35))));
         rect_blend(top, 0, 0, 256, 192, 0x000000, a); rect_blend(bot, 0, 0, 256, 192, 0x000000, a);
     }
     pw_step();
-    if (exit_code >= 0 && exit_code != EXIT_LAUNCH) { state_save(); return exit_code; }
+    if (exit_code >= 0 && exit_code != EXIT_LAUNCH) { state_save(); job_stop(&artjob); return exit_code; }
     return -1;
 }

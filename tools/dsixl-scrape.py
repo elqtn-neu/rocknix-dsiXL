@@ -43,9 +43,19 @@ TDB_REGION = {'E': ['US', 'EN'], 'P': ['EN', 'US'], 'J': ['JA'], 'K': ['KO'], 'D
 lock = threading.Lock()
 
 
+PROGRESS = False                            # --progress: lines for the menu's progress bar ("@ ...")
+
+
 def log(*a):
     with lock:
         print(*a, flush=True)
+
+
+def prog(*fields):
+    """a line the menu reads: @ <what> <fields...> (tab separated)"""
+    if PROGRESS:
+        with lock:
+            print('@\t' + '\t'.join(str(f) for f in fields), flush=True)
 
 
 def get(url, tries=3):
@@ -185,6 +195,7 @@ def download_to(url, path):
                 if time.time() - last > 2:
                     last = time.time()
                     log('  LaunchBox database: %d MB%s' % (got >> 20, ' of %d MB' % (total >> 20) if total else ''))
+                    prog('download', got >> 20, total >> 20)
         os.replace(tmp, path)
         return True
     except Exception as e:
@@ -218,6 +229,7 @@ class LaunchBox:
             if not download_to(LB_ZIP, zp) and not os.path.exists(zp):
                 return
         log('  LaunchBox database: reading (a minute or two)')
+        prog('reading')
         try:
             self.games = self._read(zp)
             json.dump(self.games, open(ip, 'w'))
@@ -402,6 +414,7 @@ def scrape_game(sysname, path, media, lr, force, stats, lb=None):
         if got:
             stats['found'] += 1
     log('  [%d/%d] %s: %s' % (stats['done'], stats['total'], base, ', '.join(got) if got else 'nothing new'))
+    prog('game', sysname, stats['done'], stats['total'], base, len(got))
 
 
 def main():
@@ -415,7 +428,11 @@ def main():
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--no-launchbox', action='store_true', help='skip the LaunchBox Games Database')
     ap.add_argument('--refresh-launchbox', action='store_true', help='download its database again now')
+    ap.add_argument('--progress', action='store_true', help='machine-readable progress lines (the menu)')
     a = ap.parse_args()
+    global PROGRESS
+    PROGRESS = a.progress
+    prog('start')
     lb = None
     if not a.no_launchbox:
         systems = [s for s in ('nds', 'gba') if not a.only or a.only == s]
@@ -437,7 +454,9 @@ def main():
             for r in roms:
                 ex.submit(scrape_game, sysname, r, a.media, lr, a.force, stats, lb)
         log('%s: art found for %d of %d' % (sysname.upper(), stats['found'], len(roms)))
+        prog('system', sysname, stats['found'], len(roms))
     log('Done. The menu shows the new art the next time it opens (or Options > Look for new games).')
+    prog('done')
 
 
 if __name__ == '__main__':
