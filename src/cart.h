@@ -17,3 +17,5 @@ void cart_draw(Surf *s, Game *g, const CartPose *p);
 /* the size of the cartridge of a system, mm */
 void cart_size(int sys, float *w, float *h, float *d);
 void cart_free(Game *g);
+/* its art loaded and its face built, ahead of being drawn; 1 when that was done now (0: it already was) */
+int cart_prepare(Game *g);

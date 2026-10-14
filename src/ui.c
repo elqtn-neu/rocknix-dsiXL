@@ -325,7 +325,6 @@ static void jump(int d) {
         i = j;
     }
     select_game(sys, i, 1);
-    letter_poke();
     rumble(10, 0.3f);
 }
 
@@ -344,10 +343,8 @@ static void switch_sys(int to) {
 /* art is kept only for the games near the selection (the handheld has 1 GB) */
 static void manage_art(void) {
     for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) lib[s].g[i].keep = 0;
-    for (int v = 0; v < V_COUNT; v++) {
-        int r = v == sys ? 6 : 1;
-        for (int i = MAX(0, row[v].sel - r); i <= MIN(vn(v) - 1, row[v].sel + r); i++) vg(v, i)->keep = 1;
-    }
+    for (int v = 0; v < V_COUNT; v++)      /* every tab's: switching to one finds its row ready */
+        for (int i = MAX(0, row[v].sel - 6); i <= MIN(vn(v) - 1, row[v].sel + 6); i++) vg(v, i)->keep = 1;
     if (lg) lg->keep = 1;
     if (rg) rg->keep = 1;
     if (logo_cur) logo_cur->keep = 1;
@@ -355,6 +352,17 @@ static void manage_art(void) {
     for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) {
         Game *g = &lib[s].g[i];
         if (!g->keep && (g->cart || g->label_state || g->logo_state)) { cart_free(g); game_free_art(g); }
+    }
+    /* the other tabs' cartridges, made ahead while you're not doing anything (a moment after the last button or
+     * touch, so it never takes a frame from scrolling): one a frame, nearest the selection first */
+    if ((sw_t >= 0 && T - sw_t < 0.5) || T - last_input < 0.6 || state != ST_MENU) return;
+    for (int d = 0; d <= 4; d++) for (int v = 0; v < V_COUNT; v++) {
+        if (v == sys) continue;
+        for (int sg = -1; sg <= 1; sg += 2) {
+            int i = row[v].sel + sg * d;
+            if ((d == 0 && sg > 0) || i < 0 || i >= vn(v)) continue;
+            if (cart_prepare(vg(v, i))) return;
+        }
     }
 }
 
@@ -810,8 +818,7 @@ static void draw_bottom(Surf *s, float intro) {
     /* the scroll bar */
     float sby = 176 + (1 - ease_out_cubic(intro)) * 20;
     scroll_bar(s, (int)sby, vn(sys), vn(sys) ? row[sys].pos.x : 0, 5, (T - sb_press_t < 0.12) ? sb_press : 0, fav_marks(sys), 255);
-    /* the letter, in a bubble over the scroll bar, while jumping or dragging along it */
-    if (fabsf(row[sys].pos.v) > 6) letter_poke();      /* a flick coasting along */
+    /* the letter, in a bubble over the scroll bar, while a finger is on it */
     float lk = (float)(T - letter_t), lin = (float)(T - letter_in);
     if (lk < 0.8f && vn(sys) && sys != V_FAV) {
         Game *lg0 = cur_game(sys);
@@ -2369,6 +2376,7 @@ static void touch_update(void) {
             int z, i = scroll_bar_hit(x, 176, vn(sys), 5, &z);
             if (z) { sb_press = z; sb_press_t = T; move(z); }
             else if (i >= 0) { select_game(sys, i, 1); sfx(SFX_SCROLL); }
+            if (!z) letter_poke();
         } else {
             tch.zone = 0;
             coast = 0; glide_dir = 0;
@@ -2400,7 +2408,6 @@ static void touch_update(void) {
             if (dtt > 0.001) { tch.vel = lerpf(tch.vel, (float)(-(x - tch.lastx) / G.spacing / dtt), 0.5f); tch.lastx = (float)x; tch.lastt = T; }
             int n = CLAMP((int)roundf(row[sys].pos.x), 0, vn(sys) - 1);
             if (n != row[sys].sel) { select_game(sys, n, 1); rumble(7, 0.25f); }   /* a ratchet under the finger */
-            if (fabsf(tch.vel) > 4) letter_poke();          /* going fast: where you are, by letter */
         }
         if (tch.zone == 3 && tch.moved) {
             /* dragging the list */

@@ -104,9 +104,12 @@ static void label_art(Game *g, Surf *s, int x, int y, int w, int h) {
     text_center(s, FONT_BD, x + w / 2, ty, 0xffffff, 255, t);
 }
 
-/* per game: the face texture, and the last picture of the cartridge with the pose it was drawn in (a cartridge that
- * only bobs up and down is the same picture at another place: drawn once, then copied) */
-typedef struct { Img front, half; Img spr; int ox, oy, has; CartPose key; } CartData;
+/* per game: the face texture, and the last pictures of the cartridge with the poses they were drawn in (a cartridge
+ * that only bobs up and down is the same picture at another place: drawn once, then copied). Two: a game can be in
+ * two rows at once (its system's and the favourites, both on screen while the tabs slide), each in its own pose */
+#define SLOTS 2
+typedef struct { Img front, half; Img spr[SLOTS]; int ox[SLOTS], oy[SLOTS], has[SLOTS]; unsigned use[SLOTS]; CartPose key[SLOTS]; } CartData;
+static unsigned use_clock;
 
 static Img *build_front(Game *g, Img *im) {
     Model *m = &model[g->sys];
@@ -172,7 +175,7 @@ static void build_backs(void) {
 void cart_free(Game *g) {
     CartData *cd = g->cart;
     if (!cd) return;
-    img_free(&cd->front); img_free(&cd->half); img_free(&cd->spr); free(cd); g->cart = 0;
+    img_free(&cd->front); img_free(&cd->half); for (int k = 0; k < SLOTS; k++) img_free(&cd->spr[k]); free(cd); g->cart = 0;
 }
 
 static int same_pose(const CartPose *a, const CartPose *b) {
@@ -196,23 +199,29 @@ static V3 outward(const V3 *q, V3 ctr) {
     return v3_dot(n, v3_sub(q[0], ctr)) < 0 ? v3_scale(n, -1) : n;
 }
 
-void cart_draw(Surf *s, Game *g, const CartPose *p) {
-    if (p->alpha <= 0.004f || p->scale <= 0.01f) return;
+int cart_prepare(Game *g) {
+    if (g->cart) return 0;
     build_models(); build_backs();
     if (g->label_state == 0) game_load_art(g);
-    if (!g->cart) {
-        CartData *cd = calloc(1, sizeof *cd);
-        if (!cd) return;
-        build_front(g, &cd->front);
-        /* a half-size copy for the small ones: each texel then lands on about one screen sample (no shimmer) */
-        if (cd->front.px) img_resize_area(&cd->front, &cd->half, cd->front.w / 2, cd->front.h / 2);
-        g->cart = cd;
-    }
+    CartData *cd = calloc(1, sizeof *cd);
+    if (!cd) return 0;
+    build_front(g, &cd->front);
+    /* a half-size copy for the small ones: each texel then lands on about one screen sample (no shimmer) */
+    if (cd->front.px) img_resize_area(&cd->front, &cd->half, cd->front.w / 2, cd->front.h / 2);
+    g->cart = cd;
+    return 1;
+}
+
+void cart_draw(Surf *s, Game *g, const CartPose *p) {
+    if (p->alpha <= 0.004f || p->scale <= 0.01f) return;
+    cart_prepare(g);
+    if (!g->cart) return;
     CartData *cd = g->cart;
     /* the same pose as last time: the same picture, wherever it is now (to the whole pixel, as the DS moves things) */
     int rx = (int)roundf(p->sx), ry = (int)roundf(p->sy);
-    if (cd->has && same_pose(&cd->key, p)) {
-        blit(s, &cd->spr, rx + cd->ox, ry + cd->oy, (int)(p->alpha * 255));
+    for (int k = 0; k < SLOTS; k++) if (cd->has[k] && same_pose(&cd->key[k], p)) {
+        cd->use[k] = ++use_clock;
+        blit(s, &cd->spr[k], rx + cd->ox[k], ry + cd->oy[k], (int)(p->alpha * 255));
         return;
     }
     int cache = p->gloss < 0.001f;
@@ -269,10 +278,11 @@ void cart_draw(Surf *s, Game *g, const CartPose *p) {
         mat.gloss = pass ? p->gloss : 0; mat.gloss_pos = p->gloss_pos; mat.sheen = pass ? 0.35f : 0;
         r3d_poly(poly, uv, m->n, &mat);
     }
-    if (!cache) { r3d_end((int)(p->alpha * 255)); cd->has = 0; return; }
-    img_free(&cd->spr);
+    if (!cache) { r3d_end((int)(p->alpha * 255)); return; }
+    int k = !cd->has[0] ? 0 : !cd->has[1] ? 1 : cd->use[0] <= cd->use[1] ? 0 : 1;   /* a free slot, else the older */
+    img_free(&cd->spr[k]);
     int ox, oy;
-    if (r3d_end_img(&cd->spr, &ox, &oy)) { cd->has = 0; return; }
-    cd->ox = ox - rx; cd->oy = oy - ry; cd->key = *p; cd->has = 1;
-    blit(s, &cd->spr, ox, oy, (int)(p->alpha * 255));
+    if (r3d_end_img(&cd->spr[k], &ox, &oy)) { cd->has[k] = 0; return; }
+    cd->ox[k] = ox - rx; cd->oy[k] = oy - ry; cd->key[k] = *p; cd->has[k] = 1; cd->use[k] = ++use_clock;
+    blit(s, &cd->spr[k], ox, oy, (int)(p->alpha * 255));
 }
