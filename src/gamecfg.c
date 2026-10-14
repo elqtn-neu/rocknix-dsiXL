@@ -9,10 +9,12 @@
 #include <sys/file.h>
 
 static const GameOpt NDS_OPTS[] = {
-    { "Screen", "shader", "How the DS's pixels are drawn on the big screens.", 5, 0,
-      { "Crisp pixels", "Pixel grid", "Crisp, DS colors", "Smooth", "Pixel-perfect" },
-      { "ds-crisp", "ds-grid", "ds-crisp-color", "none", "ds-integer" },
-      { "Sharp, exactly 4x on this screen. Barely uses the GPU.", "Sharp, with the DS's faint pixel grid.",
+    { "Screen", "shader", "How the DS's pixels are drawn on the big screens.", 6, 0,
+      { "Crisp pixels", "DSi LCD", "Pixel grid", "Crisp, DS colors", "Smooth", "Pixel-perfect" },
+      { "ds-crisp", "dsi-lcd", "ds-grid", "ds-crisp-color", "none", "ds-integer" },
+      { "Sharp, exactly 4x on this screen. Barely uses the GPU.",
+        "Like the menu: the DSi screen's stripes and fine gaps.",
+        "Sharp, with the DS's faint pixel grid.",
         "Sharp, with the DS screen's softer colors.", "Softly smoothed. Uses no GPU at all: the most battery.",
         "Pixel-perfect squares, nothing else." } },
     { "Performance", "power_profile", "How hard the handheld works: speed against battery and heat.", 3, 1,

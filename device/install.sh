@@ -25,6 +25,7 @@ case "$1" in
     rm -f $D/enabled /storage/.config/autostart/zz-dsixl "/storage/roms/ports/DSi Menu.sh"
     if cmp -s $D/start_es.sh /usr/bin/start_es.sh 2>/dev/null; then umount -l /usr/bin/start_es.sh; fi
     hotkeys off
+    rm -f /storage/.config/drastic/shaders/dsi-lcd.frag
     rm -rf $D
     echo "Removed. /storage/roms/dsixl (art, sounds) is still there."
     exit 0 ;;
@@ -62,6 +63,8 @@ rm -rf $D/assets.new && cp -r $SRC/assets $D/assets.new && rm -rf $D/assets && m
 for f in session.sh restore.sh start_es.sh launch.sh brightness.sh backup.sh net.sh update.sh; do
     cp $SRC/device/$f $D/$f.new && chmod 755 $D/$f.new && mv -f $D/$f.new $D/$f
 done
+# the in-game DSi LCD look (Emulator settings > Screen > DSi LCD): libdsflip reads DraStic's shader folder
+mkdir -p /storage/.config/drastic/shaders && cp $SRC/device/shaders/*.frag /storage/.config/drastic/shaders/ 2>/dev/null || true
 cp $SRC/tools/dsixl-scrape.py $D/dsixl-scrape.py.new && mv -f $D/dsixl-scrape.py.new $D/dsixl-scrape.py
 cp $SRC/VERSION $D/VERSION 2>/dev/null || true
 # the recommended emulator settings, only where ROCKNIX has none of its own yet (yours are never touched)

@@ -2,7 +2,10 @@
 
 A Nintendo DS and Game Boy Advance menu for the Anbernic RG DS Plus running ROCKNIX with ROCKNIXDS, made to look
 and feel like the Nintendo DSi's own menu. Both screens are drawn at the DS's 256x192 and shown at exactly 4x on
-the Plus's 1024x768 panels: no HD redraw, no filtering.
+the Plus's 1024x768 panels: no HD redraw, no filtering. Each pixel is drawn the way a DSi's LCD shows it (red, green
+and blue stripes, a fine gap between rows and columns), so text and edges read as pixels rather than blur
+(Options > Screen: DSi LCD or Plain pixels). Games can have the same look: Emulator settings > Screen > DSi LCD
+(a GPU shader for ROCKNIXDS's DraStic, `device/shaders/dsi-lcd.frag`).
 
 <p align="center">
   <img src="docs/img/boot.png" width="190" alt="Boot: the DS logo on the top screen, the health and safety screen on the bottom">
