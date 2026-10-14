@@ -113,7 +113,9 @@ static int save_keys(int sys, const int *choice, int only_missing) {
     const char *path = cfg_path();
     /* ROCKNIX's own lock for this file (profile.d/001-functions), so nothing writes it at the same time */
     int lk = open("/tmp/.system.cfg.lock", O_CREAT | O_RDWR | O_CLOEXEC, 0644);
-    if (lk >= 0) flock(lk, LOCK_EX);
+    /* (a while at most: whatever holds it for good must not freeze the menu) */
+    int locked = 0;
+    for (int i = 0; lk >= 0 && i < 40 && !(locked = !flock(lk, LOCK_EX | LOCK_NB)); i++) usleep(25000);
     size_t len; char *text = slurp(path, &len);
     char tmp[600]; snprintf(tmp, sizeof tmp, "%s.dsixl", path);
     FILE *f = fopen(tmp, "w");
@@ -137,7 +139,7 @@ static int save_keys(int sys, const int *choice, int only_missing) {
         else remove(tmp);
     }
     free(text);
-    if (lk >= 0) { flock(lk, LOCK_UN); close(lk); }
+    if (lk >= 0) { if (locked) flock(lk, LOCK_UN); close(lk); }
     return rc;
 }
 int gamecfg_save(int sys, const int *choice) { return save_keys(sys, choice, 0); }

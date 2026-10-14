@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
             printf(rc ? "Couldn't write ROCKNIX's system.cfg\n" : "Emulator settings: the recommended ones set where none were\n");
             return rc ? 1 : 0;
         }
-        else { fprintf(stderr, "usage: %s [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <file>]\n", argv[0]); return 2; }
+        else fprintf(stderr, "dsixl: ignoring %s (usage: %s [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <file>])\n", argv[i], argv[0]);
     }
     signal(SIGTERM, on_term); signal(SIGINT, on_term);
     config_load();

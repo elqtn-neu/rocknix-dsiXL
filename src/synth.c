@@ -338,11 +338,11 @@ int16_t *synth_sfx(int id, int *frames) {
     return render(&b, wet, frames);
 }
 
-/* ---- the music: an original tune in the DSi menu's spirit (not its theme): a relaxed bossa in F, 92 beats a
+/* ---- the music: an original tune in the DSi menu's spirit (not its theme): a light bossa in F, 100 beats a
  * minute, 32 bars (about 80 seconds) going round. Electric piano chords, a plucked bass, a shaker, a rim, a soft
  * kick; the tune on bells, the second time round on wood an octave up. ---- */
 
-#define BPM 92.0
+#define BPM 100.0
 enum { MAJ7, MAJ9, MIN7, MIN9, DOM7, DOM9, DOM13, SUS7, MIN6, DOM7B9 };
 static const int VOICING[][4] = {
     [MAJ7] = { 4, 7, 11, -1 }, [MAJ9] = { 4, 7, 11, 14 }, [MIN7] = { 3, 7, 10, -1 }, [MIN9] = { 3, 7, 10, 14 },
@@ -351,29 +351,32 @@ static const int VOICING[][4] = {
 };
 /* 16 bars, two halves each: (root pitch class, quality) */
 static const struct { int r, q; } CHORDS[16][2] = {
-    { { 5, MAJ9 }, { 5, MAJ9 } },  { { 4, MIN7 }, { 9, DOM7 } },  { { 2, MIN9 }, { 2, MIN9 } },  { { 7, MIN7 }, { 0, DOM9 } },
-    { { 5, MAJ9 }, { 5, MAJ9 } },  { { 10, MAJ7 }, { 10, MIN6 } }, { { 9, MIN7 }, { 2, DOM7B9 } }, { { 7, MIN9 }, { 0, DOM13 } },
-    { { 10, MAJ9 }, { 10, MAJ9 } }, { { 9, MIN7 }, { 9, MIN7 } },  { { 7, MIN9 }, { 7, MIN9 } },  { { 0, SUS7 }, { 0, DOM7 } },
-    { { 5, MAJ9 }, { 2, MIN9 } },  { { 7, MIN9 }, { 0, DOM9 } },  { { 5, MAJ7 }, { 2, DOM7 } },  { { 7, MIN7 }, { 0, SUS7 } },
+    /* A: F, Dm, Gm, C, twice round, home on F */
+    { { 5, MAJ7 }, { 5, MAJ7 } },  { { 2, MIN7 }, { 2, MIN7 } },  { { 7, MIN7 }, { 7, MIN7 } },  { { 0, DOM9 }, { 0, DOM9 } },
+    { { 5, MAJ9 }, { 5, MAJ9 } },  { { 2, MIN9 }, { 2, MIN9 } },  { { 7, MIN7 }, { 0, DOM7 } },  { { 5, MAJ7 }, { 5, MAJ7 } },
+    /* B: up to Bb, Am, Gm, C, and back round */
+    { { 10, MAJ7 }, { 10, MAJ7 } }, { { 9, MIN7 }, { 9, MIN7 } },  { { 7, MIN7 }, { 7, MIN7 } },  { { 0, DOM13 }, { 0, DOM13 } },
+    { { 10, MAJ7 }, { 10, MAJ7 } }, { { 9, MIN7 }, { 2, DOM7 } },  { { 7, MIN7 }, { 7, MIN7 } },  { { 0, SUS7 }, { 0, DOM7 } },
 };
-/* the tune: bar, 16th, length in 16ths, note */
+/* the tune: one motif (an F chord climbed and stepped down from) and its answer, said twice; then a higher B part
+ * that climbs a little further each time and falls home. Bar, 16th, length in 16ths, note */
 static const struct { uint8_t bar, at, len, note; } MEL[] = {
-    { 0, 2, 2, 72 }, { 0, 4, 2, 69 }, { 0, 6, 2, 67 }, { 0, 8, 6, 69 },
-    { 1, 0, 2, 76 }, { 1, 2, 2, 74 }, { 1, 4, 4, 72 }, { 1, 10, 2, 73 }, { 1, 12, 4, 76 },
-    { 2, 0, 6, 77 }, { 2, 6, 2, 76 }, { 2, 8, 2, 74 }, { 2, 10, 6, 72 },
-    { 3, 0, 2, 70 }, { 3, 2, 2, 69 }, { 3, 4, 4, 67 }, { 3, 8, 4, 74 }, { 3, 12, 4, 72 },
-    { 4, 2, 2, 72 }, { 4, 4, 2, 76 }, { 4, 6, 2, 79 }, { 4, 8, 8, 81 },
-    { 5, 0, 4, 79 }, { 5, 4, 4, 77 }, { 5, 8, 4, 74 }, { 5, 12, 4, 73 },
-    { 6, 0, 4, 72 }, { 6, 4, 2, 76 }, { 6, 6, 2, 72 }, { 6, 8, 4, 75 }, { 6, 12, 4, 74 },
-    { 7, 0, 6, 74 }, { 7, 6, 2, 72 }, { 7, 8, 8, 69 },
-    { 8, 0, 2, 74 }, { 8, 2, 2, 77 }, { 8, 4, 4, 81 }, { 8, 8, 4, 79 }, { 8, 12, 4, 77 },
-    { 9, 0, 8, 76 }, { 9, 8, 2, 74 }, { 9, 10, 2, 72 }, { 9, 12, 4, 69 },
-    { 10, 0, 2, 70 }, { 10, 2, 2, 74 }, { 10, 4, 4, 77 }, { 10, 8, 4, 76 }, { 10, 12, 4, 74 },
-    { 11, 0, 8, 72 }, { 11, 8, 4, 70 }, { 11, 12, 4, 67 },
-    { 12, 0, 2, 69 }, { 12, 2, 2, 72 }, { 12, 4, 4, 76 }, { 12, 8, 2, 77 }, { 12, 10, 2, 76 }, { 12, 12, 4, 74 },
-    { 13, 0, 4, 70 }, { 13, 4, 4, 74 }, { 13, 8, 4, 72 }, { 13, 12, 4, 70 },
-    { 14, 0, 6, 69 }, { 14, 6, 2, 67 }, { 14, 8, 4, 66 }, { 14, 12, 4, 69 },
-    { 15, 0, 4, 67 }, { 15, 4, 4, 70 }, { 15, 8, 8, 72 },
+    { 0, 0, 2, 69 }, { 0, 2, 2, 72 }, { 0, 4, 4, 77 }, { 0, 8, 4, 76 }, { 0, 12, 4, 72 },
+    { 1, 0, 4, 74 }, { 1, 4, 2, 72 }, { 1, 6, 6, 69 }, { 1, 12, 4, 65 },
+    { 2, 0, 2, 67 }, { 2, 2, 2, 69 }, { 2, 4, 4, 70 }, { 2, 8, 4, 74 }, { 2, 12, 4, 72 },
+    { 3, 0, 4, 70 }, { 3, 4, 4, 69 }, { 3, 8, 8, 67 },
+    { 4, 0, 2, 69 }, { 4, 2, 2, 72 }, { 4, 4, 4, 77 }, { 4, 8, 4, 76 }, { 4, 12, 4, 72 },
+    { 5, 0, 4, 74 }, { 5, 4, 2, 77 }, { 5, 6, 6, 76 }, { 5, 12, 4, 74 },
+    { 6, 0, 4, 72 }, { 6, 4, 4, 70 }, { 6, 8, 4, 69 }, { 6, 12, 4, 67 },
+    { 7, 0, 12, 65 }, { 7, 12, 4, 72 },
+    { 8, 0, 8, 74 }, { 8, 8, 4, 77 }, { 8, 12, 4, 74 },
+    { 9, 0, 8, 72 }, { 9, 8, 4, 76 }, { 9, 12, 4, 72 },
+    { 10, 0, 4, 70 }, { 10, 4, 4, 74 }, { 10, 8, 4, 79 }, { 10, 12, 4, 77 },
+    { 11, 0, 12, 76 }, { 11, 12, 4, 72 },
+    { 12, 0, 4, 74 }, { 12, 4, 4, 77 }, { 12, 8, 4, 81 }, { 12, 12, 4, 79 },
+    { 13, 0, 4, 77 }, { 13, 4, 4, 76 }, { 13, 8, 8, 78 },
+    { 14, 0, 4, 79 }, { 14, 4, 4, 77 }, { 14, 8, 4, 74 }, { 14, 12, 4, 70 },
+    { 15, 0, 14, 72 }, { 15, 14, 2, 67 },
 };
 
 #define MV 40
@@ -405,7 +408,7 @@ static void m_step(long s) {
     static const int COMP[] = { 0, 3, 6, 10, 12 };
     for (int k = 0; k < 5; k++) if (COMP[k] == st || (two && st == 8)) {
         int base = 48 + r; if (base < 52) base += 12;
-        float vel = (st == 0 || st == 8 ? 0.13f : 0.10f) * human(s, 1);
+        float vel = (st == 0 || st == 8 ? 0.11f : 0.085f) * human(s, 1);     /* (under the tune) */
         int len = st == 0 || st == 8 ? 3 : 2;
         for (int i = 0; i < 4; i++) if (VOICING[q][i] >= 0) {
             int n = base + VOICING[q][i]; while (n > 72) n -= 12;
@@ -427,7 +430,8 @@ static void m_step(long s) {
     if (st == 6 || st == 14) m_note(V_KICK, 46, 1, 0.12f, 0);
     /* the tune */
     for (int i = 0; i < ARRAY_LEN(MEL); i++) if (MEL[i].bar == b16 && MEL[i].at == st) {
-        if (bar < 16) m_note(V_BELL, MEL[i].note, MEL[i].len, 0.17f * human(s, 4), 0.15f);
+        /* (out in front: the bells, and a soft electric piano under them for body) */
+        if (bar < 16) { m_note(V_BELL, MEL[i].note, MEL[i].len, 0.22f * human(s, 4), 0.15f); m_note(V_EP, MEL[i].note, MEL[i].len, 0.07f, 0.1f); }
         else { m_note(V_WOOD, MEL[i].note + 12, MEL[i].len, 0.16f * human(s, 4), 0.2f); m_note(V_GLASS, MEL[i].note, MEL[i].len, 0.05f, -0.2f); }
     }
 }

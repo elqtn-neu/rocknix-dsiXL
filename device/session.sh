@@ -19,6 +19,7 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
     cat $GPU/governor > /tmp/dsixl-gpu-governor; echo powersave > $GPU/governor 2>/dev/null
   fi
   ARGS="$*"
+  RET_SYS= RET_FILE=                 # back from a game: its system and file (kept apart: file names have spaces)
   fails=0
   trap 'kill -TERM $P 2>/dev/null; sleep 0.5; kill -9 $P 2>/dev/null; echo "$(up) stopped by the unit"; exit 0' TERM INT
   while :; do
@@ -27,7 +28,8 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
     echo "-TERM dsixl" > /tmp/.process-kill-data
     cd $D
     T0=$(cut -d' ' -f1 /proc/uptime)
-    XDG_RUNTIME_DIR=/var/run/0-runtime-dir DSIXL_HOME=$D ./dsixl --backend kms $ARGS >> $D/data/dsixl.out 2>&1 &
+    if [ -n "$RET_FILE" ]; then set -- --return "$RET_SYS" "$RET_FILE"; else set --; fi
+    XDG_RUNTIME_DIR=/var/run/0-runtime-dir DSIXL_HOME=$D ./dsixl --backend kms $ARGS "$@" >> $D/data/dsixl.out 2>&1 &
     P=$!
     wait $P; rc=$?
     echo "$(up) menu exited: $rc"
@@ -44,15 +46,16 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
         printf '%s\t%s\t%s\t%s\n' "$SYS" "$FILE" "$(awk -v a="$G0" -v b="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "%d", b - a }')" "$(date +%s)" >> $D/data/plays.log
         $D/backup.sh "$SYS" "$ROM"          # a copy of its save, when it changed
         [ -f $GPU/governor ] && echo powersave > $GPU/governor 2>/dev/null
-        ARGS="--return $SYS $FILE"
+        ARGS= RET_SYS=$SYS RET_FILE=$FILE
         ;;
       20) touch /tmp/dsixl-to-es; break ;;                       # to EmulationStation
       21) echo "$(up) power off"; $D/restore.sh; systemctl poweroff; exit 0 ;;
       22) echo "$(up) reboot"; $D/restore.sh; systemctl reboot; exit 0 ;;
-      0|143) fails=0; ARGS="--no-boot" ;;                        # the exit hotkey, or closed: straight back
+      0|143) fails=0; ARGS="--no-boot" RET_FILE= ;;                        # the exit hotkey, or closed: straight back
       *)
         # a crash, or no display (3): once more, then EmulationStation rather than black screens
-        $D/brightness.sh apply          # (it may have had the screens dimmed or off to save power)
+        timeout 5 $D/brightness.sh apply   # (it may have had the screens dimmed or off to save power)
+        RET_FILE=
         NOW=$(cut -d' ' -f1 /proc/uptime)
         if [ "$(echo "$NOW $T0" | awk '{ print ($1 - $2 < 15) }')" = 1 ]; then fails=$((fails + 1)); fi
         if [ $fails -ge 2 ]; then
