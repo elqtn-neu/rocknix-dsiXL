@@ -693,6 +693,7 @@ static void draw_row(Surf *s, int sy, float dx, float alpha, int hide) {
         fw = sel_w_of(cs) + 16; fh = sel_w_of(cs) * ch / cw + 34;
     }
     const char *label = is_cont(sy, r->sel) ? "CONTINUE" : "START";
+    fw = MAX(fw, (float)text_w(FONT_BD, label) + 16);        /* (wide enough for its word) */
     sel_frame(s, fx + dx, G.cy + 9, fw * fp + stretch, fh * fp - stretch * 0.25f, label, favs ? C_GOLD : tint_now(), shine, (int)(fa * 255));
     for (int k = 0; k < n; k++) {
         Game *g = vg(sy, idx[k]);
@@ -809,6 +810,7 @@ static void draw_bottom(Surf *s, float intro) {
     if (lk < 0.8f && vn(sys) && sys != V_FAV) {
         Game *lg0 = cur_game(sys);
         float bx = 26 + 204 * (vn(sys) > 1 ? row[sys].pos.x / (vn(sys) - 1) : 0.5f), byy = 150;
+        bx = clampf(bx, 46, 210);                      /* (clear of the sun and gear buttons) */
         float pk = ease_out_back(sat(lk / 0.15f)) * (1 - smoothstep(0.6f, 0.8f, lk));
         int la = (int)(255 * pk);
         Accent ac = accent();
@@ -916,7 +918,7 @@ static void draw_error(Surf *s, float k) {
     float y = err_y() + (1 - ease_out_back(k)) * 120, x = 128 - ERR_W / 2;
     int a = (int)(255 * MIN(1.0f, k * 1.5f));
     window(s, x, y, ERR_W, h, 0, a);
-    text_center(s, FONT_BD, 128, (int)y + 4, 0x303030, a, err_title);
+    text_center_fit(s, FONT_BD, 128, (int)y + 4, ERR_W - 20, 0x303030, a, err_title);
     int used = text_wrap_center(s, FONT_SM, 128, (int)y + 26, ERR_W - 24, 13, C_TEXT_SOFT, a, err_msg);
     float press = (tch.down && tch.zone == 14) ? 1 : 0;
     button(s, 128 - 40, y + 30 + used + 4, 80, 18, "OK", 1, press, a);
@@ -1053,9 +1055,9 @@ static void opt_act(int i, int dir) {
     }
 }
 
-#define OPT_X 30
+#define OPT_X 22
 #define OPT_Y 4
-#define OPT_W 196
+#define OPT_W 212
 #define OPT_ROW 16
 #define OPT_VIS 8                       /* rows seen at once: the list scrolls */
 #define OPT_LIST_Y (OPT_Y + 24)
@@ -1205,13 +1207,13 @@ static void draw_game_settings(Surf *bot, Surf *top, float k) {
     Accent ac = accent();
     /* the page tabs: L Nintendo DS | Game Boy Advance R */
     for (int p = 0; p < 2; p++) {
-        float tx = GS_X + 6 + p * 115, tw = 113, ty = y + 22;
+        float tx = GS_X + 4 + p * 117, tw = 115, ty = y + 22;
         int act = gs_sys == p;
         rrect(bot, tx, ty, tw, GS_TABS - 3, 5, act ? ac.base : 0xc8c8c8, a);
         rrect_vgrad(bot, tx + 1, ty + 1, tw - 2, GS_TABS - 5, 4, act ? 0xffffff : 0xf0f0f0, act ? ac.pale : 0xe2e2e2, a);
         btn_glyph(bot, p ? (int)(tx + tw - 15) : (int)tx + 4, (int)ty + 2, p ? "R" : "L", act ? 0x3c3c3c : 0xa0a0a0, a);
         /* the words centred in the room the glyph leaves */
-        text_center(bot, FONT_SM, (int)(p ? tx + (tw - 16) / 2 : tx + 16 + (tw - 16) / 2), (int)ty - 1, act ? col_mix(ac.base, 0x000000, 130) : 0x8a8a8a, a, p ? "Game Boy Advance" : "Nintendo DS");
+        text_center_fit(bot, FONT_SM, (int)(p ? tx + (tw - 16) / 2 : tx + 16 + (tw - 16) / 2), (int)ty - 1, (int)tw - 15, act ? col_mix(ac.base, 0x000000, 130) : 0x8a8a8a, a, p ? "Game Boy Advance" : "Nintendo DS");
     }
     /* the rows, sliding in from the side when the page changes */
     float pk = ease_out_cubic((float)(T - gs_page_t) / 0.22f);
@@ -1800,23 +1802,28 @@ static int chip(Surf *s, int x, int y, const char *label, int a) {
     return x + w;
 }
 static int plus(Surf *s, int x, int y, int a) { return text(s, FONT_MD, x + 2, y - 4, C_TEXT_SOFT, a, "+") + 2; }
-static void help_line(Surf *s, int y, const char *what, const char *const *keys, int nk, int a) {
-    text(s, FONT_SM, 22, y - 2, C_TEXT, a, what);
-    int x = 100;
+/* what, then its buttons: after it on the line when they fit, else on their own line under it (returns the height) */
+static int help_line(Surf *s, int y, const char *what, const char *const *keys, int nk, int a) {
+    int lx = text(s, FONT_SM, 22, y - 2, C_TEXT, a, what) + 8;
+    int w = 0;
+    for (int i = 0; i < nk; i++) w += text_w(FONT_SM, keys[i]) + 8 + (i ? text_w(FONT_MD, "+") + 4 : 0);
+    int x = MAX(lx, 104), h = 0;
+    if (x + w > 234) { x = 128 - w / 2; y += 15; h = 15; }
     for (int i = 0; i < nk; i++) { if (i) x = plus(s, x, y, a); x = chip(s, x, y, keys[i], a); }
+    return h;
 }
 static void help_draw(Surf *bot, Surf *top) {
     float k = help_anim;
     if (k <= 0.001f) return;
     int a = (int)(255 * MIN(1.0f, k * 1.5f));
     rect_blend(bot, 0, 0, 256, 192, 0x000000, (int)(90 * k));
-    float y = 8 + (1 - ease_out_back(k)) * 160;
     int ds = help_sys == SYS_NDS;
-    int h = ds ? 150 : 166;
+    float y = (ds ? 12 : 4) + (1 - ease_out_back(k)) * 160;
+    int h = ds ? 166 : 182;
     window(bot, 12, y, 232, h, help_then_launch ? "Before you play" : "Controls in games", a);
     static const char *quit[] = { "L", "SELECT", "START" };
     int ly = (int)y + 30;
-    help_line(bot, ly, "Leave the game", quit, 3, a); ly += 18;
+    ly += help_line(bot, ly, "Leave the game", quit, 3, a) + 18;
     if (ds) {
         text_wrap_center(bot, FONT_SM, 128, ly - 2, 206, 12, C_TEXT_SOFT, a,
                          "Hold all three together. With Resume on (Emulator settings), that saves exactly where you are first: the next start carries on from there.");
@@ -1824,9 +1831,9 @@ static void help_draw(Surf *bot, Surf *top) {
         text_wrap_center(bot, FONT_SM, 128, ly, 206, 12, C_TEXT_SOFT, a, "The touch screen is the DS's own. Close the lid to sleep.");
     } else {
         static const char *sv[] = { "SELECT", "R" }, *ld[] = { "SELECT", "L" }, *mn[] = { "SELECT", "X" };
-        help_line(bot, ly, "Save a state", sv, 2, a); ly += 16;
-        help_line(bot, ly, "Load it", ld, 2, a); ly += 16;
-        help_line(bot, ly, "RetroArch's menu", mn, 2, a); ly += 20;
+        ly += help_line(bot, ly, "Save a state", sv, 2, a) + 16;
+        ly += help_line(bot, ly, "Load it", ld, 2, a) + 16;
+        ly += help_line(bot, ly, "RetroArch's menu", mn, 2, a) + 20;
         text_wrap_center(bot, FONT_SM, 128, ly - 2, 206, 12, C_TEXT_SOFT, a,
                          "(ROCKNIX's usual buttons.) With Resume on, leaving saves where you are. Close the lid to sleep.");
     }
@@ -1836,8 +1843,8 @@ static void help_draw(Surf *bot, Surf *top) {
         rect_blend(top, 0, 14, 256, 178, 0xf6f6f6, (int)(150 * k));
         float ty = 70 + (1 - ease_out_cubic(k)) * 90;
         window(top, 28, ty, 200, 52, 0, a);
-        text_center(top, FONT_BD, 128, (int)ty + 4, C_TEXT, a, ds ? "Nintendo DS" : "Game Boy Advance");
-        text_center(top, FONT_SM, 128, (int)ty + 26, C_TEXT_SOFT, a, help_then_launch ? "Shown once. Options > Controls in games." : "The same for every game.");
+        text_center_fit(top, FONT_BD, 128, (int)ty + 4, 186, C_TEXT, a, ds ? "Nintendo DS" : "Game Boy Advance");
+        text_center_fit(top, FONT_SM, 128, (int)ty + 26, 186, C_TEXT_SOFT, a, help_then_launch ? "Shown once. Options > Controls in games." : "The same for every game.");
     }
 }
 static void help_update(void) {

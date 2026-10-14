@@ -249,9 +249,9 @@ void sel_frame(Surf *s, float cx, float cy, float w, float h, const char *label,
     rrect_line(s, x + 1, y + 1, w - 2, h - 2, 6, 1, 0xffffff, alpha * 70 / 255);
     frame_shine(s, x, y, w, h, shine, alpha);
     if (label && *label) {
-        int ty = (int)(y + h - 17);
-        text_center(s, FONT_BD, (int)cx + 1, ty + 1, a.dark, alpha * 200 / 255, label);
-        text_center(s, FONT_BD, (int)cx, ty, 0xffffff, alpha, label);
+        int ty = (int)(y + h - 18);
+        text_center_fit(s, FONT_BD, (int)cx + 1, ty + 1, (int)w - 12, a.dark, alpha * 200 / 255, label);
+        text_center_fit(s, FONT_BD, (int)cx, ty, (int)w - 12, 0xffffff, alpha, label);
     }
 }
 
@@ -315,9 +315,18 @@ void window(Surf *s, float x, float y, float w, float h, const char *title, int 
         rrect_vgrad(s, x + 1, y + 1, w - 2, 19, 7, a.light, a.base, alpha);
         rect_vgrad(s, (int)x + 1, (int)y + 13, (int)w - 2, 7, col_mix(a.light, a.base, 180), a.base, alpha);
         hline(s, (int)x + 1, (int)(x + w) - 2, (int)y + 20, a.dark, alpha);
-        text_center(s, FONT_BD, (int)(x + w / 2) + 1, (int)y + 1, a.dark, alpha * 160 / 255, title);
-        text_center(s, FONT_BD, (int)(x + w / 2), (int)y, 0xffffff, alpha, title);
+        text_center_fit(s, FONT_BD, (int)(x + w / 2) + 1, (int)y + 1, (int)w - 16, a.dark, alpha * 160 / 255, title);
+        text_center_fit(s, FONT_BD, (int)(x + w / 2), (int)y, (int)w - 16, 0xffffff, alpha, title);
     }
+}
+
+void text_center_fit(Surf *s, int font, int cx, int y, int max_w, uint32_t c, int alpha, const char *str) {
+    while (text_w(font, str) > max_w && font != FONT_SM) {
+        int smaller = font == FONT_BD || font == FONT_LG ? FONT_MD : FONT_SM;
+        y += (text_h(font) - text_h(smaller)) / 2; font = smaller;
+    }
+    char b[256]; text_fit(font, str, max_w, b, sizeof b);
+    text_center(s, font, cx, y, c, alpha, b);
 }
 
 void button(Surf *s, float x, float y, float w, float h, const char *label, int focus, float press, int alpha) {
@@ -327,7 +336,7 @@ void button(Surf *s, float x, float y, float w, float h, const char *label, int 
     rrect(s, x, y, w, h, 5, focus ? a.base : 0xb8b8b8, alpha);
     rrect_vgrad(s, x + 1, y + 1, w - 2, h - 2, 4, focus ? 0xffffff : 0xffffff, focus ? a.pale : 0xe9e9e9, alpha);
     if (focus) rrect_line(s, x + 1, y + 1, w - 2, h - 2, 4, 1, col_mix(a.base, 0xffffff, 90), alpha);
-    if (label) text_center(s, FONT_MD, (int)(x + w / 2), (int)(y + h / 2) - 9, focus ? col_mix(a.base, 0x000000, 120) : C_TEXT, alpha, label);
+    if (label) text_center_fit(s, FONT_MD, (int)(x + w / 2), (int)(y + h / 2) - 9, (int)w - 10, focus ? col_mix(a.base, 0x000000, 120) : C_TEXT, alpha, label);
 }
 
 void star(Surf *s, float cx, float cy, float r, uint32_t c, int alpha) {

@@ -287,8 +287,8 @@ void kbd_draw(Kbd *k, Surf *bot, Surf *top) {
     float by = (1 - ease_out_cubic(an)) * -34;
     rect_vgrad(bot, 0, (int)by, 256, 30, ac.light, ac.base, a);
     hline(bot, 0, 255, (int)by + 30, ac.dark, a);
-    text_center(bot, FONT_BD, 129, (int)by + 6, ac.dark, a * 160 / 255, k->title);
-    text_center(bot, FONT_BD, 128, (int)by + 5, 0xffffff, a, k->title);
+    text_center_fit(bot, FONT_BD, 129, (int)by + 6, 236, ac.dark, a * 160 / 255, k->title);
+    text_center_fit(bot, FONT_BD, 128, (int)by + 5, 236, 0xffffff, a, k->title);
     /* the top screen: what's typed, in a big field, its cursor blinking */
     if (!top) return;
     float ty = 52 + (1 - ease_out_cubic(an)) * -80;
@@ -325,7 +325,7 @@ void busy_draw(Surf *s, const char *line1, const char *line2, double t, float an
         int lead = ((int)(t * 10)) % 8, age = (lead - i + 8) % 8;
         disc(s, 128 + cosf(an) * 7, y + 15 + sinf(an) * 7, 1.9f, col_mix(ac.base, 0xffffff, MIN(220, age * 32)), a);
     }
-    text_center(s, FONT_MD, 128, (int)y + 25, C_TEXT, a, line1);
+    text_center_fit(s, FONT_MD, 128, (int)y + 25, 192, C_TEXT, a, line1);
     if (line2 && line2[0]) { char b[96]; text_fit(FONT_SM, line2, 190, b, sizeof b); text_center(s, FONT_SM, 128, (int)y + 43, C_TEXT_SOFT, a, b); }
     if (progress >= 0) {
         float py = y + h - 15;

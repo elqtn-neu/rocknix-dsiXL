@@ -40,6 +40,8 @@ void scroll_bar(Surf *s, int y, int count, float pos, float view, int press, con
 int scroll_bar_hit(int x, int y0, int count, float view, int *zone);   /* the item a touch at x points at */
 /* a window and a button in the DSi's style */
 void window(Surf *s, float x, float y, float w, float h, const char *title, int alpha);
+/* centred text that keeps inside max_w: a size smaller when it's too wide, then shortened with an ellipsis */
+void text_center_fit(Surf *s, int font, int cx, int y, int max_w, uint32_t c, int alpha, const char *str);
 void button(Surf *s, float x, float y, float w, float h, const char *label, int focus, float press, int alpha);
 /* a blinking 4-point sparkle */
 void sparkle(Surf *s, float x, float y, float size, uint32_t c, int alpha);
