@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
     library_scan();
     plat_log("dsixl: %d NDS, %d GBA games; home %s", lib[SYS_NDS].n, lib[SYS_GBA].n, cfg.home);
     PlatInfo info;
+    if (cfg.banana) setenv("DSIXL_NO_GRAB", "1", 1);   /* (BananaOS's bananad has the power button and the lid) */
     if (plat_init(backend, &info)) { plat_log("no display"); fprintf(stderr, "dsixl: no display\n"); return 3; }
     plat_log("display: %s, %dx scale", info.backend, info.scale);
     plat_set_lcd(cfg.lcd);

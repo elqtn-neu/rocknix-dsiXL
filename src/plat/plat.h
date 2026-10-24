@@ -50,8 +50,8 @@ void plat_shutdown(void);
 int plat_audio_start(int rate, void (*mix)(int16_t *buf, int frames));
 void plat_set_title(const char *s);
 /* the panels show the DS's pixels the way a DSi's LCD does (pixel gaps, colour stripes) where they are scaled 3x or
- * more; on by default */
-void plat_set_lcd(int on);
+ * more: 0 plain pixels, 1 the DSi's LCD (the default), 2 that with the DS screen's own colours */
+void plat_set_lcd(int mode);
 /* the power button and the lid to the menu alone (1: ROCKNIX's input_sense doesn't see them, so it doesn't put the
  * handheld to sleep before the menu's animation), or back to everyone (0) */
 void plat_grab_sys(int on);

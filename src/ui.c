@@ -842,11 +842,18 @@ static void draw_bottom(Surf *s, float intro) {
 
 static const int BRI_PCT[5] = { 10, 25, 45, 70, 100 };
 static int bri_from_system(void) {
-    /* the level nearest ROCKNIX's setting (system.cfg's display.brightness), as the script reckons it */
-    const char *e = getenv("DSIXL_SYSTEM_CFG");
-    FILE *f = fopen(e && *e ? e : "/storage/.config/system/configs/system.cfg", "r");
+    /* the level nearest ROCKNIX's setting (system.cfg's display.brightness), as the script reckons it; on BananaOS
+     * its banana/backlight (per mille, what its Settings and bananad keep) */
     int pct = 70; char line[256];
-    if (f) { while (fgets(line, sizeof line, f)) if (!strncmp(line, "display.brightness=", 19)) pct = atoi(line + 19); fclose(f); }
+    if (cfg.banana) {
+        const char *d = getenv("DSIXL_DATA"); char p[300]; snprintf(p, sizeof p, "%s/banana/backlight", d && *d ? d : "/data");
+        FILE *f = fopen(p, "r");
+        if (f) { if (fgets(line, sizeof line, f) && atoi(line) > 0) pct = atoi(line) / 10; fclose(f); }
+    } else {
+        const char *e = getenv("DSIXL_SYSTEM_CFG");
+        FILE *f = fopen(e && *e ? e : "/storage/.config/system/configs/system.cfg", "r");
+        if (f) { while (fgets(line, sizeof line, f)) if (!strncmp(line, "display.brightness=", 19)) pct = atoi(line + 19); fclose(f); }
+    }
     int best = 0;
     for (int i = 1; i < 5; i++) if (abs(BRI_PCT[i] - pct) < abs(BRI_PCT[best] - pct)) best = i;
     return best + 1;
@@ -1005,6 +1012,7 @@ static void opt_build(void) {
     for (int i = 0; i < ARRAY_LEN(order); i++) {
         if (order[i] == OPT_HIDE && !cur_game(sys)) continue;
         if (order[i] == OPT_SHOWHIDDEN && !library_hidden_count()) continue;
+        if (cfg.banana && (order[i] == OPT_WIFI || order[i] == OPT_TZ)) continue;   /* (BananaOS's own Settings has them) */
         optv[optn++] = order[i];
     }
 }
@@ -1024,9 +1032,9 @@ static void opt_label(int i, char *b, int n) {
     case OPT_SFX: snprintf(b, (size_t)n, "Sound effects: %s", cfg.sfx ? "On" : "Off"); break;
     case OPT_MUSIC: snprintf(b, (size_t)n, "Music: %s", cfg.music ? "On" : "Off"); break;
     case OPT_RUMBLE: snprintf(b, (size_t)n, "Vibration: %s", cfg.rumble ? "On" : "Off"); break;
-    case OPT_LCD: snprintf(b, (size_t)n, "Screen: %s", cfg.lcd ? "DSi LCD" : "Plain pixels"); break;
+    case OPT_LCD: snprintf(b, (size_t)n, "Screen: %s", cfg.lcd == 2 ? "DSi LCD + DS colors" : cfg.lcd ? "DSi LCD" : "Plain pixels"); break;
     case OPT_RESCAN: snprintf(b, (size_t)n, "Look for new games"); break;
-    case OPT_ES: snprintf(b, (size_t)n, "Exit to EmulationStation"); break;
+    case OPT_ES: snprintf(b, (size_t)n, cfg.banana ? "Exit to BananaOS" : "Exit to EmulationStation"); break;
     case OPT_POWER: snprintf(b, (size_t)n, "Power off"); break;
     default: opt_label_more(i, b, n); break;
     }
@@ -1056,7 +1064,7 @@ static void opt_act(int i, int dir) {
     case OPT_CLOCK: cfg.clock24 = !cfg.clock24; sfx_pitch(SFX_TOGGLE, cfg.clock24 ? 1.0f : 0.84f); config_save(); break;
     case OPT_SFX: cfg.sfx = !cfg.sfx; sfx(SFX_TOGGLE); config_save(); break;
     case OPT_MUSIC: cfg.music = !cfg.music; if (cfg.music) music_play(); else music_stop(); sfx_pitch(SFX_TOGGLE, cfg.music ? 1.0f : 0.84f); config_save(); break;
-    case OPT_LCD: cfg.lcd = !cfg.lcd; plat_set_lcd(cfg.lcd); sfx_pitch(SFX_TOGGLE, cfg.lcd ? 1.0f : 0.84f); config_save(); break;
+    case OPT_LCD: cfg.lcd = (cfg.lcd + (dir < 0 ? 2 : 1)) % 3; plat_set_lcd(cfg.lcd); sfx_pitch(SFX_TOGGLE, 0.84f + 0.1f * cfg.lcd); config_save(); break;
     case OPT_RUMBLE: cfg.rumble = !cfg.rumble; sfx_pitch(SFX_TOGGLE, cfg.rumble ? 1.0f : 0.84f); config_save(); rumble(30, 0.6f); break;
     case OPT_RESCAN: {
         sfx(SFX_SELECT);
@@ -1282,7 +1290,8 @@ static void draw_game_settings(Surf *bot, Surf *top, float k) {
         text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, line);
     } else {
         text(top, FONT_BD, 24, (int)ty + 1, col_mix(ac.base, 0x000000, 110), a, "Done");
-        text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, "Keep these settings. They're used for every game (EmulationStation's system settings show them too).");
+        text_wrap_center(top, FONT_SM, 128, (int)ty + 24, 206, 13, 0x303030, a, cfg.banana ? "Keep these settings. They're used for every game (BananaOS's Settings show them too)."
+                                                                        : "Keep these settings. They're used for every game (EmulationStation's system settings show them too).");
     }
 }
 
@@ -1598,7 +1607,8 @@ static int ver_cmp(const char *a, const char *b) {
 static int update_found(void) {
     if (T - upd_checked < 30) return upd_zip[0] != 0;
     upd_checked = T; upd_zip[0] = 0;
-    const char *dirs[] = { getenv("DSIXL_UPDATE_DIR"), "/storage/roms/ports", "/storage/roms", "/storage/games-external", "/storage/games-external/roms/ports" };
+    const char *dirs[] = { getenv("DSIXL_UPDATE_DIR"), "/storage/roms/ports", "/storage/roms", "/storage/games-external", "/storage/games-external/roms/ports",
+                           "/data", "/data/roms/ports", "/data/dsixl/updates" };      /* (BananaOS's card) */
     for (int d = 0; d < ARRAY_LEN(dirs); d++) {
         if (!dirs[d] || !*dirs[d]) continue;
         char pat[400]; snprintf(pat, sizeof pat, "%s/dsixl-*.zip", dirs[d]);
@@ -1867,14 +1877,18 @@ static void help_draw(Surf *bot, Surf *top) {
     float y = (ds ? 12 : 4) + (1 - ease_out_back(k)) * 160;
     int h = ds ? 166 : 182;
     window(bot, 12, y, 232, h, help_then_launch ? "Before you play" : "Controls in games", a);
-    static const char *quit[] = { "L", "SELECT", "START" };
+    static const char *quit[] = { "L", "SELECT", "START" }, *bquit[] = { "F", "START" };
     int ly = (int)y + 30;
-    ly += help_line(bot, ly, "Leave the game", quit, 3, a) + 18;
+    ly += (cfg.banana ? help_line(bot, ly, "Leave the game", bquit, 2, a) : help_line(bot, ly, "Leave the game", quit, 3, a)) + 18;
     if (ds) {
         text_wrap_center(bot, FONT_SM, 128, ly - 2, 206, 12, C_TEXT_SOFT, a,
-                         "Hold all three together. With Resume on (Emulator settings), that saves exactly where you are first: the next start carries on from there.");
+                         cfg.banana ? "Together. With Resume on (Emulator settings), that saves exactly where you are first. L3: the emulator's own menu."
+                                    : "Hold all three together. With Resume on (Emulator settings), that saves exactly where you are first: the next start carries on from there.");
         ly += 52;
         text_wrap_center(bot, FONT_SM, 128, ly, 206, 12, C_TEXT_SOFT, a, "The touch screen is the DS's own. Close the lid to sleep.");
+    } else if (cfg.banana) {
+        text_wrap_center(bot, FONT_SM, 128, ly - 2, 206, 12, C_TEXT_SOFT, a,
+                         "(BananaOS's buttons.) The other screen has RetroArch's save, load and menu tiles. With Resume on, leaving saves where you are. Close the lid to sleep.");
     } else {
         static const char *sv[] = { "SELECT", "R" }, *ld[] = { "SELECT", "L" }, *mn[] = { "SELECT", "X" };
         ly += help_line(bot, ly, "Save a state", sv, 2, a) + 16;
@@ -1916,7 +1930,8 @@ static void album_scan(void) {
     free(alb); free(alb_th); free(alb_th_st); alb = 0; alb_th = 0; alb_th_st = 0; albn = 0;
     alb = calloc(ALB_MAX, sizeof *alb);
     if (!alb) return;
-    const char *dirs[] = { getenv("DSIXL_ALBUM"), "/storage/roms/screenshots", "/storage/.config/drastic/screenshots", "/storage/roms/nds/screenshots" };
+    const char *dirs[] = { getenv("DSIXL_ALBUM"), "/storage/roms/screenshots", "/storage/.config/drastic/screenshots", "/storage/roms/nds/screenshots",
+                           "/data/screenshots", "/data/drastic/screenshots" };
     for (int d = 0; d < ARRAY_LEN(dirs); d++) {
         if (!dirs[d] || !*dirs[d]) continue;
         static const char *pats[] = { "%s/*.png", "%s/*.jpg", "%s/*.PNG", "%s/*.bmp" };
@@ -2071,11 +2086,12 @@ static int resume_png(const Game *g, char *out, int n) {
     char p[700];
     if (g->sys == SYS_NDS) {
         snprintf(p, sizeof p, "%s/nds/%s.resume.dss", root ? root : "/storage/roms/savestates", g->base);
+        if (cfg.banana && !root) snprintf(p, sizeof p, "/data/drastic/savestates/%s.resume.dss", g->base);   /* (its run-drastic's) */
         if (!file_exists(p)) return -1;
         snprintf(out, (size_t)n, "%s.png", p);          /* (a picture, when something left one) */
         return 0;
     }
-    const char *dirs[] = { root ? root : "/storage/roms/savestates", "/storage/.config/retroarch/states" };
+    const char *dirs[] = { root ? root : cfg.banana ? "/data/states" : "/storage/roms/savestates", cfg.banana ? "/data/retroarch/states" : "/storage/.config/retroarch/states" };
     for (int d = 0; d < 2; d++) for (int sub = 0; sub < 2; sub++) {
         snprintf(p, sizeof p, "%s%s/%s.state.auto", dirs[d], sub ? "" : "/gba", g->base);
         if (file_exists(p)) { snprintf(out, (size_t)n, "%s.png", p); return 0; }
@@ -2121,6 +2137,12 @@ static Img *photo_for(Game *g) {
 
 static double vol_t = -10, vol_until = -10, vol_read_t; static int vol_pct = -1;
 static int volume_now(void) {
+    if (cfg.banana) {
+        /* BananaOS: bananad changes it; its volume script says what it is now */
+        FILE *p = popen("/usr/libexec/banana/volume get 2>/dev/null", "r"); int v = -1;
+        if (p) { if (fscanf(p, "%d", &v) != 1) v = -1; pclose(p); }
+        return v;
+    }
     const char *e = getenv("DSIXL_SYSTEM_CFG");
     FILE *f = fopen(e && *e ? e : "/storage/.config/system/configs/system.cfg", "r");
     int v = -1; char line[256];
@@ -2134,7 +2156,7 @@ static void volume_step(void) {
         vol_pct = CLAMP(vol_pct + (pressed(B_VOLUP) ? 5 : -5), 0, 100);     /* (straight away; the real level follows) */
     }
     if ((in.held & (BIT(B_VOLUP) | BIT(B_VOLDN))) && !(in.held & BIT(B_MENU))) { vol_t = T; vol_until = T + 0.8; }
-    if (T < vol_until && T - vol_read_t > 0.1) { vol_read_t = T; int v = volume_now(); if (v >= 0) vol_pct = v; }
+    if (T < vol_until && T - vol_read_t > (cfg.banana ? 0.25 : 0.1)) { vol_read_t = T; int v = volume_now(); if (v >= 0) vol_pct = v; }
 }
 static void draw_vol_bar(Surf *s) {
     float k = (float)(T - vol_t);
@@ -2885,7 +2907,8 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     /* sleep: the power button, the lid closing (in the menu itself: not in the start-up or a launch) */
     int lid_opened = !input->lid && sl_lid_prev, lid_shut = input->lid && !sl_lid_prev;
     sl_lid_prev = input->lid;
-    if (sl_state == SL_NONE && state == ST_MENU && !rg && (input->power || lid_shut)) sleep_start(lid_shut);
+    /* (BananaOS: bananad puts it to sleep the moment the lid shuts and pauses the menu; only the waking is ours) */
+    if (sl_state == SL_NONE && state == ST_MENU && !rg && !cfg.banana && (input->power || lid_shut)) sleep_start(lid_shut);
     if (sl_state == SL_GOING && T - sl_t >= sl_going_len()) sleep_now();
     if (sl_state == SL_ASLEEP) {
         sleep_idle(input, lid_opened);

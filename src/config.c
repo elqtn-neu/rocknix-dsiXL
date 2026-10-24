@@ -26,6 +26,17 @@ static void defaults(void) {
     cfg.clock24 = 1; cfg.sfx = 1; cfg.music = 1; cfg.rumble = 1; cfg.lcd = 1; cfg.boot_splash = 1; cfg.boot_wait = 0;
     cfg.dim_after = 120; cfg.screen_off_after = 300;
     struct stat st;
+    const char *pl = getenv("DSIXL_PLATFORM");
+    cfg.banana = pl ? !strcmp(pl, "banana") : stat("/etc/banana/systems.conf", &st) == 0;
+    if (cfg.banana) {
+        /* BananaOS: the card's data partition is /data, the games in roms/<system> */
+        const char *d = getenv("DSIXL_DATA"); if (!d || !*d) d = "/data";      /* (tests: somewhere else) */
+        snprintf(cfg.dir_nds, sizeof cfg.dir_nds, "%s/roms/nds", d);
+        snprintf(cfg.dir_gba, sizeof cfg.dir_gba, "%s/roms/gba", d);
+        snprintf(cfg.media, sizeof cfg.media, "%s/dsixl/media", d);
+        snprintf(cfg.sounds, sizeof cfg.sounds, "%s/dsixl/sounds", d);
+        return;
+    }
     int dev = stat("/storage/roms", &st) == 0;
     snprintf(cfg.dir_nds, sizeof cfg.dir_nds, "%s", dev ? "/storage/roms/nds" : "roms/nds");
     snprintf(cfg.dir_gba, sizeof cfg.dir_gba, "%s", dev ? "/storage/roms/gba" : "roms/gba");
@@ -39,6 +50,7 @@ static void find_home(void) {
     struct stat st;
     if (e && *e) snprintf(cfg.home, sizeof cfg.home, "%s", e);
     else if (stat("/storage/.config/dsixl", &st) == 0) snprintf(cfg.home, sizeof cfg.home, "/storage/.config/dsixl");
+    else if (stat("/data/dsixl/dsixl", &st) == 0) snprintf(cfg.home, sizeof cfg.home, "/data/dsixl");
     else {
         char exe[PATH_MAX]; ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
         if (n > 0) {
@@ -128,7 +140,8 @@ void config_save(void) {
         "sound_effects = %d\n"
         "music = %d\n"
         "vibration = %d\n"
-        "# 1: the screens look like a DSi's (each pixel with a fine gap and colour stripes); 0: plain square pixels\n"
+        "# the screens: 1 like a DSi's (each pixel with a fine gap and colour stripes), 2 that with the DS screen's own\n"
+        "# (duller) colours, 0 plain square pixels\n"
         "dsi_screen = %d\n"
         "# the health and safety screen at start (1), and how it ends: 0 waits for a touch, n continues after n seconds\n"
         "boot_splash = %d\n"

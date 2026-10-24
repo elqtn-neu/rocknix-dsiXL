@@ -268,6 +268,9 @@ int library_media(const Game *g, const char *kind, char *out, int sz) {
     const char *romdir = g->sys == SYS_NDS ? cfg.dir_nds : cfg.dir_gba;
     snprintf(stem, sizeof stem, "%s/%s/%s/%s", cfg.media, sd, kind, g->base);
     if (try_ext(stem, out, sz)) return 1;
+    /* BananaOS's: <system folder>/media/box|cart|label/<rom name> (its own box art fetcher, its README's way) */
+    snprintf(stem, sizeof stem, "%s/media/%s/%s", romdir, kind, g->base);
+    if (try_ext(stem, out, sz)) return 1;
     /* EmulationStation's scraped media, as ROCKNIX keeps it beside the ROMs */
     static const struct { const char *kind, *suffix; } es[] = {
         { "logo", "-marquee" }, { "logo", "-wheel" }, { "box", "-thumb" }, { "box", "-boxart" }, { "box", "-image" },

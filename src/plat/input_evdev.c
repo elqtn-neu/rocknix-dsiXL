@@ -133,6 +133,8 @@ static void scan(void) {
 }
 
 void evdev_init(int pw[2], int ph[2], int scale[2], int ox[2], int oy[2]) {
+    /* BananaOS: bananad reads the power button and the lid next to everyone, and must keep getting them */
+    if (getenv("DSIXL_NO_GRAB")) grab_sys = 0;
     for (int i = 0; i < 2; i++) { pw_[i] = pw[i]; ph_[i] = ph[i]; sc_[i] = scale[i]; ox_[i] = ox[i]; oy_[i] = oy[i]; }
     scan();
 }

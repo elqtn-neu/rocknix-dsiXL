@@ -4,8 +4,9 @@ A Nintendo DS and Game Boy Advance menu for the Anbernic RG DS Plus running ROCK
 and feel like the Nintendo DSi's own menu. Both screens are drawn at the DS's 256x192 and shown at exactly 4x on
 the Plus's 1024x768 panels: no HD redraw, no filtering. Each pixel is drawn the way a DSi's LCD shows it (red, green
 and blue stripes, a fine gap between rows and columns), so text and edges read as pixels rather than blur
-(Options > Screen: DSi LCD or Plain pixels). Games can have the same look: Emulator settings > Screen > DSi LCD
-(a GPU shader for ROCKNIXDS's DraStic, `device/shaders/dsi-lcd.frag`).
+(Options > Screen: DSi LCD, DSi LCD + DS colors with the DS screen's own duller colours, or Plain pixels). Games can
+have the same looks: Emulator settings > Screen > DSi LCD or DSi LCD + DS colors (GPU shaders for DraStic,
+`device/shaders/dsi-lcd.frag` and `dsi-lcd-color.frag`).
 
 <p align="center">
   <img src="docs/img/boot.png" width="190" alt="Boot: the DS logo on the top screen, the health and safety screen on the bottom">
@@ -195,6 +196,34 @@ well; needs Wi-Fi). `--disable` / `--uninstall` undo it.
 
 **The emulators** come with the image, not with the menu: ROCKNIXDS's DraStic (DS, straight to both panels) and
 ROCKNIX's RetroArch with mGBA (GBA). The installer checks they're there and says so if one isn't.
+
+## On BananaOS
+
+The same zip installs on [BananaOS](https://github.com/JorreFog/BananaLinux) too (the RG DS / RG DS Plus Linux
+with its own menu). BananaOS's system is read-only and always starts its own menu, so there the DSi Menu is an entry
+on its shelf rather than the start screen:
+
+1. Unzip the release onto the card's `BANANA` drive (it puts `roms/ports/Install DSi Menu.sh` and the hidden
+   `roms/ports/.dsixl-install` folder there), over file sharing or with the card in a computer.
+2. On the handheld: the **Ports** shelf, **Install DSi Menu**. BananaOS's menu starts again by itself, with a
+   **DSi Menu** entry first on its shelf (the DS's icon).
+3. Open it: the DSi Menu on both screens. Games start with BananaOS's own emulators (DraStic through SuperDrastic or
+   BananaDS, as Settings > Nintendo DS says; RetroArch with the GBA core it says), and come back to the DSi Menu.
+   **Options > Exit to BananaOS** goes back to BananaOS's shelf.
+
+What's different there:
+
+- **Files on the card**: the menu in `dsixl/` (its art in `dsixl/media`, your sounds in `dsixl/sounds`); the two
+  shaders in `banana/shaders`; BananaOS's systems list copied to `banana/systems.conf` with the entry added (BananaOS
+  reads that copy instead of its own; Uninstall DSi Menu takes the entry out, and the copy away when nothing else
+  in it is yours). Box art BananaOS fetched (`roms/<system>/media/box`, `cart`, `label`) is used as it is.
+- **Emulator settings** write BananaOS's own files, the ones its Settings > Nintendo DS and Other systems change:
+  the DS emulator, the screen (`superdrastic.conf`'s shader and BananaDS's), the 3D resolution, the CPU clock,
+  quick resume; the GBA's core, shader and quick resume. Only what you change is written.
+- **Sleep** is BananaOS's: closing the lid sleeps the handheld at once (its bananad pauses the menu, or the game);
+  opening it plays the menu's wake. Wi-Fi and the time zone are in BananaOS's Settings. Leave a game: F + Start.
+- **Updates**: a newer release's zip on the card (its top folder, `roms/ports` or `dsixl/updates`) shows in Options
+  as **Update**.
 
 ## Art
 
