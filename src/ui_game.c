@@ -50,13 +50,16 @@ void game_enter(void) {
 static const Img *pixels(void);
 static int eff_look(void);
 static void preview_make(const Img *src, int lk);
-void game_prefetch(Game *g) {
+int game_prefetch(Game *g) {
     Game *keep = G; int kf = foc;
     G = g; load_state();
+    /* (its saved screens are read off the main thread: not ready yet, try again later) */
+    if (g->sys == SYS_NDS && has_res && !art_dss(res_p)) { if (keep && page == P_GAME) { G = keep; foc = kf; load_state(); } return 0; }
     const Img *px = pixels(); int lk = eff_look();
     if (px && (preview_look != lk || preview_src != px || preview_g != G)) { preview_make(px, lk); preview_look = lk; preview_src = px; preview_g = G; }
     cover_prepare(g, 300, 330, 24);
     if (keep && page == P_GAME) { G = keep; foc = kf; load_state(); }
+    return 1;
 }
 static void load_state(void) {
     has_res = resume_available(G, &res_t);

@@ -120,11 +120,15 @@ static int letters_on(void) { return (tab == SH_DS || tab == SH_GBA) && cfg.sort
 
 /* ---------------------------------------------------------------- the stage (the top screen), kept as a picture */
 static Game *prefetched;
+static int building, build_tab; static Game *build_g;   /* a new stage half made */
 static Surf stage, stage_old;
 static Game *stage_g; static int stage_ok, stage_tab = -1; static double stage_t = -10;
 static int stage_wait_dss; static char stage_dss[800];
 static double sel_t = -10, sel_gap = 10;          /* when the selection last moved, and the step before that */
-void home_selection_changed(void) { stage_ok = 0; prefetched = 0; dirty(0); }
+void home_selection_changed(void) {
+    stage_ok = 0; prefetched = 0; prerender_forget(); dirty(0);
+    if (building) build_g = 0;                       /* (a stage half made from what just changed: made again) */
+}
 
 static int chip(Surf *s, int x, int y, const char *t, uint32_t bg, uint32_t fg) {
     int w = ht_w(HF_BODYB, t, 0) + 36;
@@ -132,11 +136,15 @@ static int chip(Surf *s, int x, int y, const char *t, uint32_t bg, uint32_t fg) 
     ht(s, HF_BODYB, x + 18, y + 23 - ht_h(HF_BODYB) / 2, fg, 255, 0, t);
     return x + w + 12;
 }
-static void stage_paint(Surf *s, Game *g) {
+/* part 1: the backdrop and the cover; 2: the words and the cards; 0: both */
+static void stage_paint(Surf *s, Game *g, int part) {
     surf_noclip(s);
+    if (part == 2) goto words;
+    {
     Art *A = g ? art_get(g) : 0;
     uint32_t v = A && A->state ? A->vivid : accent;
     rect_vgrad(s, 0, 0, SW, SH, h_mix(pal.bg, v, pal.dark ? 0.22f : 0.18f), pal.bg, 255);
+    (void)A;
     if (!g) {
         static const char *what[] = { "No favorites yet", "No DS games yet", "No GBA games yet", "Nothing played yet" };
         static const char *how[] = { "Press X on a game, and it waits for you here.", "Put them in /data/roms/nds on the card.",
@@ -148,6 +156,10 @@ static void stage_paint(Surf *s, Game *g) {
     }
     hr_shadow(s, 64, 104, 360, 396, 26, 44, 24, pal.dark ? 200 : 110);
     game_cover(s, g, 64, 104, 360, 396, 26, 255);
+    if (part == 1) return;
+    }
+words:
+    if (!g) return;
     /* what it is */
     int x = 472, y = 112;
     int e = ht(s, HF_CAPS, x, y, accent_text(), 255, 3, g->sys == SYS_GBA ? "GAME BOY ADVANCE" : "NINTENDO DS");
@@ -195,24 +207,34 @@ void home_draw_top(Surf *s) {
     if (fresh && stage_g && sel_gap < 0.16 && T - sel_t < 0.09 && page == P_HOME && seq == Q_NONE) {
         /* moving fast through the shelf: the stage waits until it stops (each step would cost a whole new stage) */
         dirty(0);
+    } else if (fresh && page == P_HOME && seq == Q_NONE && !(building && build_g == g && build_tab == tab)) {
+        /* a new game: its stage made over two frames (the backdrop and cover, then the rest), the old one shown
+         * meanwhile, so neither frame keeps the deck waiting; then the crossfade */
+        if (!building) { Surf t = stage_old; stage_old = stage; stage = t; }
+        building = 1; build_g = g; build_tab = tab;
+        stage_paint(&stage, g, 1);
+        surf_copy(s, &stage_old);
+        dirty(0);
+        return;
     } else if (!stage_ok || fresh) {
-        if (fresh && stage_g != (Game *)-1) { Surf t = stage_old; stage_old = stage; stage = t; stage_t = T; }
-        stage_paint(&stage, g);
+        if (building && build_g == g && build_tab == tab) { stage_paint(&stage, g, 2); stage_t = T; }
+        else {
+            if (fresh && !building) { Surf t = stage_old; stage_old = stage; stage = t; stage_t = T; }
+            stage_paint(&stage, g, 0);
+        }
+        building = 0;
         stage_g = g; stage_tab = tab; stage_ok = 1;
     }
     surf_copy(s, &stage);
     float k = (float)((T - stage_t) / 0.16);
     if (k < 1) {
         /* the last one fades out over it: quick, so moving through the shelf keeps up */
-        int a = (int)(256 * (1 - ease_out_cubic(k)));
+        uint32_t a = (uint32_t)(256 * (1 - ease_out_cubic(k))), ia = 256 - a;
         for (int y = 0; y < SH; y++) {
-            uint32_t *d = s->px + (size_t)y * s->pitch, *o = stage_old.px + (size_t)y * stage_old.pitch;
+            uint32_t *d = s->px + (size_t)y * s->pitch; const uint32_t *o = stage_old.px + (size_t)y * stage_old.pitch;
             for (int x = 0; x < SW; x++) {
                 uint32_t c = o[x], e = d[x];
-                if (c == e) continue;
-                uint32_t rb = (((c & 0xff00ff) * (uint32_t)a + (e & 0xff00ff) * (uint32_t)(256 - a)) >> 8) & 0xff00ff;
-                uint32_t gg = (((c & 0x00ff00) * (uint32_t)a + (e & 0x00ff00) * (uint32_t)(256 - a)) >> 8) & 0x00ff00;
-                d[x] = rb | gg;
+                d[x] = ((((c & 0xff00ff) * a + (e & 0xff00ff) * ia) >> 8) & 0xff00ff) | ((((c & 0x00ff00) * a + (e & 0x00ff00) * ia) >> 8) & 0x00ff00);
             }
         }
         dirty(0);
@@ -279,7 +301,7 @@ void home_draw_bot(Surf *s, float yoff, int alpha) {
             if (i == sel[tab] && (seq == Q_LAUNCH || (seq == Q_RETURN && seq_t < 1.05))) continue;   /* (it's in flight) */
             Img *sp = cart_sprite(c, 0);
             if (sp) hb_scaled(s, sp, cx - w / 2 - M * k, cy - h / 2 - M * k, sp->w * w / cw, sp->h * h / chh, a);
-            else cart_ghost(s, c, cx - w / 2, cy - h / 2, w, h, a);
+            else { cart_ghost(s, c, cx - w / 2, cy - h / 2, w, h, a); dirty(1); }   /* (the real one next frame) */
             int fresh = c->is_new && !c->last_played;
             if ((c->resume || fresh) && fabsf(d) < 1.5f) {
                 const char *b = c->resume ? "RESUME" : "NEW";
@@ -437,7 +459,9 @@ static void motion(float dt) {
 
 /* the cartridges next to the selection made while nothing moves (one a frame), so moving to them never waits */
 static void prewarm(void) {
-    if (spr_moving(&sc, .01f) || dragging || !shn[tab]) return;
+    /* (only on frames where nothing moves: then its cost is never seen) */
+    if (spr_moving(&sc, .01f) || spr_moving(&lift, .01f) || spr_moving(&slide, .01f) || spr_moving(&tab_k, .01f) || dragging || scrub ||
+        building || T - stage_t < 0.2 || T - sel_t < 0.15 || tch.down || in.held || frame_dirty() || !shn[tab]) return;
     built = 0;
     for (int d = 1; d <= 4; d++) for (int sg = -1; sg <= 1; sg += 2) {
         int i = sel[tab] + sg * d;
@@ -458,7 +482,7 @@ static void prewarm(void) {
     Game *g = cur_game();
     if (g && g != prefetched && T - sel_t > 0.25 && page == P_HOME && seq == Q_NONE) {
         Art *A = art_get(g);
-        if (A && A->state != 0) { game_prefetch(g); prefetched = g; }
+        if (A && A->state != 0 && game_prefetch(g)) { prefetched = g; prerender_game(g); }
     }
 }
 void home_update(float dt) {

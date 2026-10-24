@@ -1,6 +1,6 @@
 #!/bin/sh
-# package.sh: dist/dsixl-<version>.zip, to unpack onto the games card's root (or the OS card's /storage): it puts
-# roms/ports/Install DSi Menu.sh (and Uninstall) and everything they install in roms/ports/.dsixl-install.
+# package.sh: dist/dsixl-<version>.zip, for BananaOS: unpacked onto the card's root it puts roms/ports/Install DSi
+# Menu.sh (and Uninstall) in BananaOS's Ports, and everything they install in roms/ports/.dsixl-install.
 #   sh build.sh aarch64 && sh tools/package.sh
 set -e
 cd "$(dirname "$0")/.."
@@ -11,7 +11,7 @@ P=$T/roms/ports; I=$P/.dsixl-install
 mkdir -p $I/bin $I/tools $I/docs
 cp "device/ports/Install DSi Menu.sh" "device/ports/Uninstall DSi Menu.sh" $P/
 cp $BIN $I/bin/dsixl-aarch64
-cp -r assets device $I/ && rm -rf $I/device/ports
+mkdir -p $I/device && cp -r assets $I/ && cp -r device/banana device/shaders $I/device/
 cp tools/dsixl-scrape.py $I/tools/ && cp docs/sounds.md $I/docs/ && cp VERSION README.md THIRD_PARTY.md $I/
 mkdir -p dist && rm -f dist/dsixl-$V.zip
 (cd $T && python3 -c "

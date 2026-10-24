@@ -1,9 +1,0 @@
-#!/bin/sh
-# /storage/.config/autostart/zz-dsixl: at boot, makes the DSi Menu the start screen (while
-# /storage/.config/dsixl/enabled exists). ROCKNIX runs the autostart scripts in name order before the menu starts;
-# "zz-" puts this after ROCKNIXDS's own hook, so this mount sits on top of its launcher and can step aside to it.
-D=/storage/.config/dsixl
-[ -e $D/enabled ] && [ -x $D/dsixl ] || exit 0
-# already ours (/proc/mounts names the device, not the file: compare the content)
-cmp -s $D/start_es.sh /usr/bin/start_es.sh && exit 0
-mount --bind $D/start_es.sh /usr/bin/start_es.sh

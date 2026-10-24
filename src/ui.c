@@ -37,9 +37,10 @@ static int dirty_s[2] = { 1, 1 };
 static int exit_code = -1;
 static double last_input;
 static int pw_mode;
-static Surf scratch;                    /* the old page while the top screen crossfades */
-static Surf base[2]; static int base_ok, drew;
-static Surf tr[4]; static int tr_ok, tr_up;  /* a page change's pictures: old and new top, under and over bottom */   /* the pages under a big moment, drawn once when it starts */
+static Surf base[2]; static int base_ok, drew;   /* the pages under a big moment, drawn once when it starts */
+static Surf tr[4]; static int tr_ok, tr_up;      /* a page change's pictures: old and new top, under and over bottom */
+static Surf pre[2]; static Game *pre_g; static int pre_ok;   /* the selected game's page, drawn ahead on a still frame */
+static Surf homesnap; static int homesnap_ok;    /* the deck as it was left (going back to it, unchanged) */
 static int launch_how;
 static Game *launch_g;
 
@@ -52,6 +53,7 @@ void spr_step(Spr *s, float k, float c, float dt) {
 }
 int spr_moving(const Spr *s, float eps) { return fabsf(s->to - s->x) > eps || fabsf(s->v) > eps * 4; }
 void dirty(int screen) { if (screen >= 0 && screen < 2) dirty_s[screen] = 1; }
+int frame_dirty(void) { return dirty_s[0] || dirty_s[1]; }
 void buzz(int ms, float k) { if (cfg.rumble) rumble(ms, k); }
 void buzz2(int ms, float k) { if (cfg.rumble) rumble_double(ms, k); }
 
@@ -509,6 +511,7 @@ void bset_set(const char *file, const char *key, const char *val) {
 static const int BRI_PM[5] = { 100, 250, 450, 700, 1000 };
 void brightness_set(int lv) {
     bri_lv = CLAMP(lv, 1, 5);
+    homesnap_ok = 0;                                 /* (the deck shows the level) */
     char sh[400]; snprintf(sh, sizeof sh, "%s/brightness.sh", cfg.home);
     if (access(sh, X_OK)) return;
     char cmd[520]; snprintf(cmd, sizeof cmd, "'%s' set %d >/dev/null 2>&1 &", sh, bri_lv);
@@ -658,6 +661,11 @@ static void sysmenu_draw_top(Surf *top) {
     }
 }
 
+/* two colours mixed, a of 256 of the first */
+static inline uint32_t mix2(uint32_t c, uint32_t e, uint32_t a, uint32_t ia) {
+    return ((((c & 0xff00ff) * a + (e & 0xff00ff) * ia) >> 8) & 0xff00ff) | ((((c & 0x00ff00) * a + (e & 0x00ff00) * ia) >> 8) & 0x00ff00);
+}
+
 /* ---------------------------------------------------------------- pages */
 void go_page(int p) {
     if (p == page) return;
@@ -675,6 +683,17 @@ static void page_draw_top(Surf *s, int p) {
 static void page_draw_bot(Surf *s, int p, float yoff, int a) {
     if (p == P_GAME) game_draw_bot(s, yoff, a); else if (p == P_SETTINGS) set_draw_bot(s, yoff, a); else home_draw_bot(s, yoff, a);
 }
+
+void prerender_game(Game *g) {
+    if (!pre[0].px) { surf_alloc(&pre[0], SW, SH); surf_alloc(&pre[1], SW, SH); }
+    if (!pre[0].px || !pre[1].px) return;
+    surf_noclip(&pre[0]); surf_noclip(&pre[1]);
+    game_draw_top(&pre[0]); status_bar(&pre[0], 16, 255);
+    fill(&pre[1], 0x000000);
+    game_draw_bot(&pre[1], 1, 255);
+    pre_g = g; pre_ok = 1;
+}
+void prerender_forget(void) { pre_ok = 0; homesnap_ok = 0; }
 
 /* ---------------------------------------------------------------- the big moments */
 /* the launch: the cartridge sinks a little (the press), springs off the deck through the hinge, and rises onto the
@@ -771,7 +790,7 @@ static void seq_draw(Surf *top, Surf *bot) {
         rect_blend(bot, 0, 0, SW, SH, 0x05060a, (int)(240 * k));
         float my = lerpf(SH / 2.f + 70, SH / 2.f - 30, m);
         int ma = (int)(255 * sat(m) * (1 - out));
-        h_glow(top, SW / 2.f, my, 300, 0x6C63D9, ma * 2 / 5);
+        h_glow(top, SW / 2.f, my, 230, 0x6C63D9, ma * 2 / 5);
         icon(top, IC_MOON, SW / 2.f, my, 160, 0xF5E7A8, ma);
         ht_center(top, HF_TITLE, SW / 2, (int)my + 120, 0xC9CCE0, ma * 4 / 5, 2, "Good night");
         if (out > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * out)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * out)); }
@@ -784,8 +803,13 @@ static void seq_draw(Surf *top, Surf *bot) {
         float gl = sinf(sat(t / 0.75f) * PI_F);
         if (k > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * k)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * k)); }
         if (gl > 0.01f) {
-            h_glow(top, SW / 2.f, SH + 60, 800, 0xfff4d8, (int)(110 * gl));
-            h_glow(bot, SW / 2.f, -60, 800, 0xfff4d8, (int)(110 * gl));
+            /* (a band of light along the hinge, row by row: the cheap way to a soft glow this wide) */
+            for (int j = 0; j < 300; j++) {
+                float f = 1 - j / 300.f; int a = (int)(120 * gl * f * f);
+                if (a <= 0) break;
+                rect_blend(top, 0, SH - 1 - j, SW, 1, 0xfff4d8, a);
+                rect_blend(bot, 0, j, SW, 1, 0xfff4d8, a);
+            }
         }
     }
 }
@@ -858,11 +882,18 @@ static void boot_draw(Surf *top, Surf *bot) {
 
 /* ---------------------------------------------------------------- start, and the frame */
 void ui_init(const UiStart *st) {
-    surf_alloc(&scratch, SW, SH);
     theme_update();
     art_init();
     sleepkey_init();
     brightness_read();
+    {   /* (the shadows every page uses: their tiles made now, while the start-up plays) */
+        Surf t; surf_alloc(&t, 8, 8);
+        static const int rb[][3] = { { 30, 15, 104 }, { 26, 15, 210 }, { 24, 15, 230 }, { 30, 18, 590 }, { 30, 15, 720 },
+                                     { 40, 30, 1024 }, { 44, 30, 880 }, { 26, 44, 360 }, { 24, 36, 300 }, { 18, 36, 576 },
+                                     { 39, 12, 196 }, { 36, 18, 300 }, { 30, 15, 400 }, { 60, 20, 120 }, { 19, 8, 120 } };
+        for (int i = 0; i < ARRAY_LEN(rb); i++) hr_shadow(&t, 0, 0, rb[i][2], rb[i][2], rb[i][0], rb[i][1], 0, 1);
+        surf_free(&t);
+    }
     tab = CLAMP(cfg.sys, 0, SH_COUNT - 1);
     shelves_build();
     for (int s = 0; s < SH_COUNT; s++) for (int i = 0; i < shn[s]; i++) {   /* the selection as it was */
@@ -928,8 +959,8 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
 
     static int minute = -1;
     { time_t t = time(0); struct tm lt; localtime_r(&t, &lt); if (lt.tm_min != minute) { minute = lt.tm_min; theme_update(); dirty(0); } }
-    if (theme_changed()) home_selection_changed();
-    if (art_step()) { home_selection_changed(); base_ok = 0; dirty(0); dirty(1); }
+    if (theme_changed()) { home_selection_changed(); pre_ok = homesnap_ok = 0; }
+    if (art_step()) { home_selection_changed(); base_ok = 0; pre_ok = homesnap_ok = 0; dirty(0); dirty(1); }
     osd_poll();
     rumble_tick();
     battery_watch();
@@ -999,11 +1030,17 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         for (int i = 0; i < 4; i++) { if (!tr[i].px) surf_alloc(&tr[i], SW, SH); surf_noclip(&tr[i]); }
         /* (the old page's are on the screens already: taken from there) */
         surf_copy(&tr[0], top);
-        page_draw_top(&tr[1], page); status_bar(&tr[1], 16, 255);
         tr_up = page != P_HOME && !(page == P_GAME && page_from == P_SETTINGS);
-        if (tr_up) surf_copy(&tr[2], bot); else page_draw_bot(&tr[2], page, 0, 255);
-        fill(&tr[3], 0x000000);
-        page_draw_bot(&tr[3], tr_up ? page : page_from, 1, 255);    /* (1: the sheet's rounded top) */
+        int ready = page == P_GAME && page_from == P_HOME && pre_ok && pre_g == cur_game();
+        if (ready) surf_copy(&tr[1], &pre[0]);
+        else { page_draw_top(&tr[1], page); status_bar(&tr[1], 16, 255); }
+        if (tr_up) {
+            surf_copy(&tr[2], bot);
+            if (page_from == P_HOME) { if (!homesnap.px) surf_alloc(&homesnap, SW, SH); if (homesnap.px) { surf_copy(&homesnap, bot); homesnap_ok = 1; } }
+        } else if (page == P_HOME && homesnap_ok) surf_copy(&tr[2], &homesnap);
+        else page_draw_bot(&tr[2], page, 0, 255);
+        if (ready) surf_copy(&tr[3], &pre[1]);
+        else { fill(&tr[3], 0x000000); page_draw_bot(&tr[3], tr_up ? page : page_from, 1, 255); }   /* (1: the sheet's rounded top) */
         tr_ok = 1;
     }
     if (!moving) tr_ok = 0;
@@ -1014,15 +1051,16 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
             int a = (int)(256 * (1 - sat(k)));
             /* ...and the new one comes in from the side it belongs to (deeper pages from the right) */
             int sh = (int)((1 - ease_out_cubic(k)) * 56) * (tr_up ? 1 : -1);
+            uint32_t ia = (uint32_t)(256 - a);
             for (int y = 0; y < SH; y++) {
-                uint32_t *d = top->px + (size_t)y * top->pitch, *o = tr[0].px + (size_t)y * tr[0].pitch, *n = tr[1].px + (size_t)y * tr[1].pitch;
-                for (int x = 0; x < SW; x++) {
-                    int xs = x - sh; xs = xs < 0 ? 0 : xs >= SW ? SW - 1 : xs;
-                    uint32_t c = o[x], e = n[xs];
-                    uint32_t rb = (((c & 0xff00ff) * (uint32_t)a + (e & 0xff00ff) * (uint32_t)(256 - a)) >> 8) & 0xff00ff;
-                    uint32_t g = (((c & 0x00ff00) * (uint32_t)a + (e & 0x00ff00) * (uint32_t)(256 - a)) >> 8) & 0x00ff00;
-                    d[x] = rb | g;
-                }
+                uint32_t *d = top->px + (size_t)y * top->pitch;
+                const uint32_t *o = tr[0].px + (size_t)y * tr[0].pitch, *n = tr[1].px + (size_t)y * tr[1].pitch;
+                /* (the new page moved by sh: its first or last column carried to the edge) */
+                int x0 = sh > 0 ? sh : 0, x1 = sh < 0 ? SW + sh : SW;
+                for (int x = 0; x < x0; x++) d[x] = mix2(o[x], n[0], (uint32_t)a, ia);
+                const uint32_t *ns = n - sh;
+                for (int x = x0; x < x1; x++) d[x] = mix2(o[x], ns[x], (uint32_t)a, ia);
+                for (int x = x1; x < SW; x++) d[x] = mix2(o[x], n[SW - 1], (uint32_t)a, ia);
             }
         } else { page_draw_top(top, page); status_bar(top, 16, 255); }
     }

@@ -98,7 +98,10 @@ void home_draw_top(Surf *s);
 void home_draw_bot(Surf *s, float yoff, int alpha);
 void home_selection_changed(void);
 void game_enter(void);
-void game_prefetch(Game *g);           /* its page made ready ahead (while the home is idle on it) */
+int game_prefetch(Game *g);
+void prerender_game(Game *g);           /* the game page drawn ahead (after game_prefetch), for Y to open at once */
+void prerender_forget(void);
+int frame_dirty(void);                  /* something is to be drawn this frame */           /* its page made ready ahead (while the home is idle on it) */
 void game_update(float dt);
 void game_draw_top(Surf *s);
 void game_draw_bot(Surf *s, float yoff, int alpha);
