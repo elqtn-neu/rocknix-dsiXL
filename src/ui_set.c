@@ -5,12 +5,14 @@
 #include "ui_int.h"
 #include "gamecfg.h"
 #include "power.h"
+#include "job.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
-enum { R_HDR, R_EMU, R_BRI, R_THEME, R_COLOR, R_SFX, R_MUSIC, R_CLOCK, R_DIM, R_OFF, R_ABOUT };
+enum { R_HDR, R_EMU, R_BRI, R_THEME, R_COLOR, R_SFX, R_MUSIC, R_RUMBLE, R_SORT, R_ART, R_CLOCK, R_DIM, R_OFF, R_ABOUT };
 typedef struct { int kind, sys, opt; const char *label, *help; } Row;
 static Row rows[40]; static int nr, foc = 1;
 static Spr scroll;                      /* the list's offset (pixels) */
@@ -47,6 +49,11 @@ void set_enter(void) {
     add(R_HDR, 0, 0, "SOUND", 0);
     add(R_SFX, 0, 0, "Sounds", "The menu's sounds: the ticks, the chimes, a game going in.");
     add(R_MUSIC, 0, 0, "Music", "The menu's tune, softly, while you choose.");
+    add(R_RUMBLE, 0, 0, "Vibration", "A small buzz you feel: a game going in, the end of a shelf, a long press.");
+    add(R_HDR, 0, 0, "SHELVES", 0);
+    add(R_SORT, 0, 0, "Order", "How the DS and GBA shelves are sorted. A to Z keeps the letters to jump with.");
+    add(R_ART, 0, 0, "Get box art", "Box art for every game that has none, from free game databases. Needs Wi-Fi. "
+                                    "It goes on in the background: the covers appear as they arrive.");
     add(R_HDR, 0, 0, "NINTENDO DS", 0);
     for (int i = 0; i < nopts[SYS_NDS]; i++) if (strcmp(opts[SYS_NDS][i].key, "shader")) add(R_EMU, SYS_NDS, i, opts[SYS_NDS][i].label, 0);
     add(R_HDR, 0, 0, "GAME BOY ADVANCE", 0);
@@ -67,6 +74,72 @@ static int row_y(int i) {
 }
 static int list_h(void) { return row_y(nr); }
 
+/* ---------------------------------------------------------------- getting art (dsixl-scrape.py, in the background) */
+static Job artjob; static long art_off; static int art_done, art_total, art_found, art_ran;
+static char art_status[96] = "";
+static float art_prog = -1;
+static void art_job_start(void) {
+    if (job_running(&artjob)) return;
+    char sp[400]; snprintf(sp, sizeof sp, "%s/dsixl-scrape.py", cfg.home);
+    if (access(sp, R_OK)) { notice("The art script is missing: install the menu again"); sfx(SFX_ERROR); return; }
+    char cmd[900];
+    snprintf(cmd, sizeof cmd, "command -v python3 >/dev/null || { echo '@\tnopython'; exit 3; }; "
+                              "DSIXL_HOME='%s' exec python3 -u '%s' --progress --media '%s' --nds '%s' --gba '%s'",
+             cfg.home, sp, cfg.media, cfg.dir_nds, cfg.dir_gba);
+    if (job_start(&artjob, "art", cmd)) { notice("Couldn't start getting art"); sfx(SFX_ERROR); return; }
+    art_off = 0; art_done = art_total = art_found = 0; art_ran = 1; art_prog = -1;
+    snprintf(art_status, sizeof art_status, "Starting");
+    sfx(SFX_OPEN);
+}
+void getart_poll(void) {
+    static double t_;
+    if (!art_ran || T - t_ < 0.25) return;
+    t_ = T;
+    int running = job_running(&artjob);
+    FILE *f = fopen(artjob.out, "rb");
+    if (f) {
+        fseek(f, art_off, SEEK_SET);
+        char line[700];
+        while (fgets(line, sizeof line, f)) {
+            if (!strchr(line, '\n') && running) break;              /* (a line still being written) */
+            art_off = ftell(f);
+            line[strcspn(line, "\n")] = 0;
+            if (line[0] != '@') continue;
+            char *fld[8]; int nf = 0;
+            for (char *t = strtok(line, "\t"); t && nf < 8; t = strtok(0, "\t")) fld[nf++] = t;
+            if (nf >= 2 && !strcmp(fld[1], "nopython")) snprintf(art_status, sizeof art_status, "Needs Python 3, which this BananaOS lacks");
+            else if (nf >= 4 && !strcmp(fld[1], "download")) {
+                snprintf(art_status, sizeof art_status, "Database: %s of %s MB", fld[2], fld[3]);
+                art_prog = atof(fld[3]) > 0 ? (float)(atof(fld[2]) / atof(fld[3])) : -1;
+            } else if (nf >= 2 && !strcmp(fld[1], "reading")) { snprintf(art_status, sizeof art_status, "Reading the database"); art_prog = -1; }
+            else if (nf >= 3 && !strcmp(fld[1], "index")) { snprintf(art_status, sizeof art_status, "Looking up the art"); art_prog = -1; }
+            else if (nf >= 7 && !strcmp(fld[1], "game")) {
+                art_done = atoi(fld[3]); art_total = atoi(fld[4]);
+                art_prog = art_total > 0 ? (float)art_done / art_total : -1;
+                snprintf(art_status, sizeof art_status, "%d of %d", art_done, art_total);
+                if (atoi(fld[6]) > 0) {
+                    art_found++;
+                    int sy = !strcmp(fld[2], "gba") ? SYS_GBA : SYS_NDS;
+                    for (int i = 0; i < lib[sy].n; i++) if (!strcmp(lib[sy].g[i].base, fld[5])) art_forget(&lib[sy].g[i]);
+                    home_selection_changed(); dirty(1);
+                }
+            }
+        }
+        fclose(f);
+    }
+    if (page == P_SETTINGS) { dirty(0); dirty(1); }
+    if (!running) {
+        art_ran = 0;
+        if (artjob.rc == 0) {
+            snprintf(art_status, sizeof art_status, art_found ? "Done: %d new" : "Done: nothing new", art_found);
+            notice(art_found ? "Box art: done" : "Box art: nothing new found"); sfx(SFX_DONE);
+        } else if (!strstr(art_status, "Python")) {
+            snprintf(art_status, sizeof art_status, "Stopped. Is Wi-Fi on?");
+            notice("Getting art stopped: is Wi-Fi on?"); sfx(SFX_ERROR);
+        }
+    }
+}
+
 /* ---------------------------------------------------------------- values */
 static int dim_i(void) { int b = 0; for (int i = 0; i < 5; i++) if (DIM_S[i] == cfg.dim_after) b = i; return b; }
 static int off_i(void) { int b = 0; for (int i = 0; i < 5; i++) if (OFF_S[i] == cfg.screen_off_after) b = i; return b; }
@@ -77,10 +150,13 @@ static void value_text(const Row *r, char *out, int n) {
     case R_COLOR: snprintf(out, (size_t)n, "%s", fav_color_name(cfg.color)); break;
     case R_SFX: snprintf(out, (size_t)n, cfg.sfx ? "On" : "Off"); break;
     case R_MUSIC: snprintf(out, (size_t)n, cfg.music ? "On" : "Off"); break;
+    case R_RUMBLE: snprintf(out, (size_t)n, cfg.rumble ? "On" : "Off"); break;
+    case R_SORT: snprintf(out, (size_t)n, "%s", cfg.sort == 1 ? "Recently played" : cfg.sort == 2 ? "Most played" : "A to Z"); break;
     case R_CLOCK: snprintf(out, (size_t)n, clock24() ? "24-hour" : "12-hour"); break;
     case R_DIM: snprintf(out, (size_t)n, "%s", DIM_N[dim_i()]); break;
     case R_OFF: snprintf(out, (size_t)n, "%s", OFF_N[off_i()]); break;
     case R_ABOUT: snprintf(out, (size_t)n, "Version %s", DSIXL_VERSION); break;
+    case R_ART: snprintf(out, (size_t)n, "%s", art_status[0] ? art_status : "Start"); break;
     default: out[0] = 0;
     }
 }
@@ -104,6 +180,9 @@ static int step(int i, int d) {
     case R_COLOR: cfg.color = (cfg.color + d + 16) % 16; config_save(); theme_update(); break;
     case R_SFX: cfg.sfx = !cfg.sfx; config_save(); break;
     case R_MUSIC: cfg.music = !cfg.music; config_save(); if (cfg.music) music_play(); else music_fade(0, 0.4f); break;
+    case R_RUMBLE: cfg.rumble = !cfg.rumble; config_save(); if (cfg.rumble) buzz(40, 0.5f); break;
+    case R_SORT: cfg.sort = (cfg.sort + d + 3) % 3; state_save(); shelves_build(); home_selection_changed(); break;
+    case R_ART: if (d < 0) return 0; art_job_start(); return 2;
     case R_CLOCK: bset_set("/data/banana/settings.conf", "clock", clock24() ? "12h" : "24h"); break;
     case R_DIM: cfg.dim_after = DIM_S[(dim_i() + d + 5) % 5]; config_save(); break;
     case R_OFF: cfg.screen_off_after = OFF_S[(off_i() + d + 5) % 5]; config_save(); break;
@@ -152,6 +231,14 @@ void set_draw_top(Surf *s) {
         char b[200]; snprintf(b, sizeof b, "%s: %s", v, note);
         ht_wrap(s, HF_BODYB, x, y, w, 34, 2, pal.text, 255, b);
     }
+    if (r->kind == R_ART && (art_ran || art_status[0])) {
+        ht(s, HF_BODYB, x, y, pal.text, 255, 0, art_status);
+        if (art_ran) {
+            hr_fill(s, x, y + 46, w, 14, 7, pal.track, 255);
+            if (art_prog >= 0) hr_fill(s, x, y + 46, MAX(14, (int)(w * art_prog)), 14, 7, accent, 255);
+            else { int bw = w / 4, bx = x + (int)((w - bw) * (0.5f + 0.5f * sinf((float)T * 2.4f))); hr_fill(s, bx, y + 46, bw, 14, 7, accent, 255); }
+        }
+    }
     if (r->kind == R_ABOUT) {
         char b[160]; float fg = 0, tg = 0;
         snprintf(b, sizeof b, "%d DS games, %d GBA games", lib[SYS_NDS].n, lib[SYS_GBA].n);
@@ -185,8 +272,8 @@ void set_draw_bot(Surf *s, float yoff, int alpha) {
         int vx = SW - 64 - (int)val_k[i].x;
         if (r->kind == R_BRI) {
             for (int j = 0; j < 5; j++) hr_fill(&c, vx - 5 * 62 + j * 62 + 8, my - 14, 52, 28, 10, j < bri_lv ? 0xE0A020 : pal.track, 255);
-        } else if (r->kind == R_SFX || r->kind == R_MUSIC) {
-            int on = r->kind == R_SFX ? cfg.sfx : cfg.music;
+        } else if (r->kind == R_SFX || r->kind == R_MUSIC || r->kind == R_RUMBLE) {
+            int on = r->kind == R_SFX ? cfg.sfx : r->kind == R_MUSIC ? cfg.music : cfg.rumble;
             hr_fill(&c, vx - 92, my - 24, 92, 48, 24, on ? accent_ink : pal.track, 255);
             hi_circle(&c, (float)(vx - (on ? 24 : 68)), (float)my, 19, 0, 0xffffff, 255);
         } else {

@@ -193,6 +193,12 @@ int art_step(void) {
     return n > 0;
 }
 
+void art_forget(Game *g) {
+    Art *a = g->art; if (!a) return;
+    pthread_mutex_lock(&mu); gen++; pthread_mutex_unlock(&mu);   /* (a load of the old picture under way: dropped) */
+    art_free(a); a->state = 0xdead;
+}
+
 void art_reset(void) {
     pthread_mutex_lock(&mu); qn = 0; gen++;
     for (int i = 0; i < dn; i++) img_free(&done[i].im);

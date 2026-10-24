@@ -18,6 +18,8 @@ void art_init(void);
 Art *art_get(Game *g);
 /* the main thread: takes what the loader finished; 1 when anything arrived */
 int art_step(void);
+/* forget one game's picture (new art arrived for it): loaded again when it's drawn next */
+void art_forget(Game *g);
 /* forget everything (a rescan) */
 void art_reset(void);
 

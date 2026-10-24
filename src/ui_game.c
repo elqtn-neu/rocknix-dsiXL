@@ -372,7 +372,7 @@ void game_update(float dt) {
         if (tapped(x, y, w, h)) { foc = f; activate(f); return; }
     }
     /* a swipe down on the page: back home */
-    if (tch_up && tch_up_moved && tch.y - tch.y0 > 160 && abs(tch.x - tch.x0) < 120) { go_page(P_HOME); return; }
+    if (tch_up && tch.id != tch_dead && tch_up_moved && tch.y - tch.y0 > 160 && abs(tch.x - tch.x0) < 120) { go_page(P_HOME); return; }
     rect_of(foc, &x, &y, &w, &h);
     focus_to(x, y, w, h, foc == F_LOOK ? 52 : foc <= F_FAV ? 26 : 30);
 }

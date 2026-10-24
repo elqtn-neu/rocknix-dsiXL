@@ -116,7 +116,7 @@ static int letter_of(const Game *g) {
     int c = toupper((unsigned char)*t);
     return c >= 'A' && c <= 'Z' ? c - 'A' + 1 : 0;   /* 0: "#" */
 }
-static int letters_on(void) { return tab == SH_DS || tab == SH_GBA; }
+static int letters_on(void) { return (tab == SH_DS || tab == SH_GBA) && cfg.sort == 0; }
 
 /* ---------------------------------------------------------------- the stage (the top screen), kept as a picture */
 static Game *prefetched;
@@ -271,7 +271,7 @@ void home_draw_bot(Surf *s, float yoff, int alpha) {
             Game *c = shelf[tab][i];
             float d = i - sc.x, dx, k; cart_place(d, &dx, &k);
             float cw, chh; cart_size(c, &cw, &chh);
-            float lf = i == sel[tab] ? lift.x : 0;
+            float lf = i == sel[tab] ? lift.x - press_of(130) * 0.9f : 0;
             float w = cw * k * (1 + 0.04f * lf), h = chh * k * (1 + 0.04f * lf);
             float cx = SW / 2 + dx + ox, cy = Y + CAR_Y - 16 * lf;
             int a = (int)(sa * (1 - clampf(fabsf(d) - 1.8f, 0, 1)));
@@ -280,11 +280,14 @@ void home_draw_bot(Surf *s, float yoff, int alpha) {
             Img *sp = cart_sprite(c, 0);
             if (sp) hb_scaled(s, sp, cx - w / 2 - M * k, cy - h / 2 - M * k, sp->w * w / cw, sp->h * h / chh, a);
             else cart_ghost(s, c, cx - w / 2, cy - h / 2, w, h, a);
-            if (c->resume && fabsf(d) < 1.5f) {
-                int bw = ht_w(HF_CAPS, "RESUME", 2) + 28, bx = (int)(cx - w / 2) - 8, by = (int)(cy - h / 2) - 12;
+            int fresh = c->is_new && !c->last_played;
+            if ((c->resume || fresh) && fabsf(d) < 1.5f) {
+                const char *b = c->resume ? "RESUME" : "NEW";
+                uint32_t bc = c->resume ? accent_ink : 0xE5484D;
+                int bw = ht_w(HF_CAPS, b, 2) + 28, bx = (int)(cx - w / 2) - 8, by = (int)(cy - h / 2) - 12;
                 hr_shadow(s, bx, by, bw, 38, 19, 8, 3, 90);
-                hr_fill(s, bx, by, bw, 38, 19, accent_ink, a);
-                ht(s, HF_CAPS, bx + 14, by + 19 - ht_h(HF_CAPS) / 2, 0xffffff, a, 2, "RESUME");
+                hr_fill(s, bx, by, bw, 38, 19, bc, a);
+                ht(s, HF_CAPS, bx + 14, by + 19 - ht_h(HF_CAPS) / 2, 0xffffff, a, 2, b);
             }
             if (c->fav && tab != SH_FAV) {
                 float z = 34 * k * (i == sel[tab] ? 1 + 0.5f * sinf(pop.x * PI_F) : 1);
@@ -324,7 +327,8 @@ void home_draw_bot(Surf *s, float yoff, int alpha) {
         }
     } else if (n) {
         ht_center(s, HF_SMALL, SW / 2, Y + LET_Y + 8, pal.faint, 255, 0,
-                  tab == SH_FAV ? "In the order you starred them  ·  X takes one off" : "The newest first");
+                  tab == SH_FAV ? "In the order you starred them  ·  X takes one off" : tab == SH_RECENT ? "The newest first" :
+                  cfg.sort == 1 ? "Recently played first  ·  Settings changes the order" : "Most played first  ·  Settings changes the order");
     }
     /* what to do */
     {
@@ -386,7 +390,7 @@ static void set_tab(int t) {
 }
 static void toggle_fav(Game *g) {
     library_set_fav(g, !g->fav);
-    sfx_ex(SFX_STAR, g->fav ? 1.0f : 0.8f, 1);
+    sfx_ex(SFX_STAR, g->fav ? 1.0f : 0.8f, 1); buzz(20, 0.35f);
     pop.x = 0; pop.v = 0; pop.to = g->fav ? 1 : 0;
     if (g->fav) { pop.x = 0; pop.to = 1; } else { pop.x = 0; pop.to = 0; }
     Game *keep = g;
@@ -465,8 +469,8 @@ void home_update(float dt) {
     int n = shn[tab];
     Game *g = cur_game();
     /* the buttons */
-    if (repeat(B_LEFT)) { if (sel[tab] > 0) select_to(sel[tab] - 1, 0); else { sfx(SFX_BUMP); sc.v -= 4; } }
-    if (repeat(B_RIGHT)) { if (sel[tab] < n - 1) select_to(sel[tab] + 1, 0); else { sfx(SFX_BUMP); sc.v += 4; } }
+    if (repeat(B_LEFT)) { if (sel[tab] > 0) select_to(sel[tab] - 1, 0); else if (pressed(B_LEFT)) { sfx(SFX_BUMP); buzz2(14, 0.3f); sc.v -= 4; } }
+    if (repeat(B_RIGHT)) { if (sel[tab] < n - 1) select_to(sel[tab] + 1, 0); else if (pressed(B_RIGHT)) { sfx(SFX_BUMP); buzz2(14, 0.3f); sc.v += 4; } }
     if (repeat(B_UP) && letters_on() && g) {           /* up / down: a letter at a time */
         int l = letter_of(g);
         for (int i = sel[tab] - 1; i >= 0; i--) if (letter_of(shelf[tab][i]) != l) { int l2 = letter_of(shelf[tab][i]); while (i > 0 && letter_of(shelf[tab][i - 1]) == l2) i--; select_to(i, 0); break; }
@@ -492,7 +496,17 @@ void home_update(float dt) {
     press_touch(112, SW - 32 - pw - 14 - ow, BAR_Y, ow, 104);
     for (int i = 0; i < SH_COUNT; i++) press_touch(120 + i, tab_x(i), 24, TAB_SW, 92);
 
-    if (tch.down && tch.id != drag_lock) {
+    /* a finger held on the middle cartridge: it sinks, and at half a second its page opens */
+    if (n && g) {
+        float cw, chh; cart_size(g, &cw, &chh);
+        int cx0 = SW / 2 - (int)cw / 2, cy0 = CAR_Y - (int)chh / 2 - 16;
+        press_touch(130, cx0, cy0, (int)cw, (int)chh);
+        if (tch.down && !tch.moved && tch.id != drag_lock && tch.id != tch_dead && T - tch.t0 > 0.5 &&
+            tch.x0 >= cx0 && tch.x0 < cx0 + cw && tch.y0 >= cy0 && tch.y0 < cy0 + chh) {
+            drag_lock = tch.id; buzz(25, 0.4f); go_page(P_GAME); return;
+        }
+    }
+    if (tch.down && tch.id != drag_lock && tch.id != tch_dead) {
         /* where did it go down */
         if (tch.y0 >= LET_Y - 16 && tch.y0 < LET_Y + 50 && letters_on() && n) { scrub = 1; drag_lock = tch.id; }
         else if (tch.y0 >= 128 && tch.y0 < 480 && tch.x0 > 100 && tch.x0 < SW - 100 && n && tch.moved) {
@@ -523,7 +537,7 @@ void home_update(float dt) {
             if (x > n - 1) x = (n - 1) + (x - (n - 1)) * 0.35f;
             sc.x = x; sc.v = 0;
             int at = CLAMP((int)roundf(x), 0, n - 1);
-            if (at != last_tick) { last_tick = at; sfx_ex(SFX_NOTCH, 1.1f, 0.5f); }
+            if (at != last_tick) { last_tick = at; sfx_ex(SFX_NOTCH, 1.1f, 0.5f); buzz(6, 0.2f); }
             if (at != sel[tab]) { sel[tab] = at; lift.x = 0.4f; lift.to = 1; sel_gap = T - sel_t; sel_t = T; home_selection_changed(); }
             dirty(1);
         } else {
@@ -537,7 +551,7 @@ void home_update(float dt) {
         }
         return;
     }
-    if (!tch_up || tch_up_moved) return;
+    if (!tch_up || tch_up_moved || tch.id == drag_lock) return;
     if (tapped(20, 256, 72, 104)) { if (sel[tab] > 0) select_to(sel[tab] - 1, 0); else sfx(SFX_BUMP); return; }
     if (tapped(SW - 92, 256, 72, 104)) { if (sel[tab] < n - 1) select_to(sel[tab] + 1, 0); else sfx(SFX_BUMP); return; }
     for (int i = 0; i < SH_COUNT; i++) if (tapped(tab_x(i), 24, TAB_SW, 92)) { set_tab(i); return; }

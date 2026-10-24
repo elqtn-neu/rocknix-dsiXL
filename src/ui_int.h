@@ -70,7 +70,9 @@ float press_of(int id);                 /* 0..1 */
 void press_hit(int id);                 /* this button was activated (by a key): it sinks for a moment */
 
 /* ---- drawing helpers shared by the pages ---- */
-void dirty(int screen);                 /* redraw that screen (0 top, 1 bottom) this frame */
+void dirty(int screen);
+void buzz(int ms, float strength);      /* the vibration motor (Settings > Vibration) */
+void buzz2(int ms, float strength);     /* two quick ones */                 /* redraw that screen (0 top, 1 bottom) this frame */
 void card(Surf *s, int x, int y, int w, int h, int r, int lift);   /* a raised card in the theme */
 void pill_button(Surf *s, int x, int y, int w, int h, const char *label, const char *key, int primary, float press, int font);
 void key_cap(Surf *s, int cx, int cy, int r, const char *k, uint32_t bg, uint32_t fg);   /* an A / B / Y button's mark */
@@ -104,6 +106,7 @@ void set_enter(void);
 void set_update(float dt);
 void set_draw_top(Surf *s);
 void set_draw_bot(Surf *s, float yoff, int alpha);
+void getart_poll(void);                 /* Settings > Get box art: its progress, and the covers that arrived */
 
 /* the system menu (START) */
 extern int sysmenu;
@@ -121,6 +124,7 @@ extern int bri_lv;
 /* ---- more shared pieces ---- */
 void press_touch(int id, int x, int y, int w, int h);   /* a button under the finger sinks while it's held */
 extern int tch_up, tch_up_moved;                          /* the finger came up this frame (and had dragged) */
+extern int tch_dead;                                     /* a touch begun before the page changed: it does nothing here */
 /* the cartridge: where the selected one rests on the deck, and one drawn at any rect (its sprite, scaled) */
 void home_cart_rect(Game *g, float *x, float *y, float *w, float *h);
 void cart_draw(Surf *s, Game *g, float x, float y, float w, float h, int a);

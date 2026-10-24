@@ -10,6 +10,7 @@
 #include "power.h"
 #include "img.h"
 #include "sleepkey.h"
+#include "rumble.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,8 @@ void spr_step(Spr *s, float k, float c, float dt) {
 }
 int spr_moving(const Spr *s, float eps) { return fabsf(s->to - s->x) > eps || fabsf(s->v) > eps * 4; }
 void dirty(int screen) { if (screen >= 0 && screen < 2) dirty_s[screen] = 1; }
+void buzz(int ms, float k) { if (cfg.rumble) rumble(ms, k); }
+void buzz2(int ms, float k) { if (cfg.rumble) rumble_double(ms, k); }
 
 /* ---------------------------------------------------------------- the look */
 static const Pal LIGHT = { 0xF2F4F7, 0xE7EBF0, 0xFFFFFF, 0x1B2027, 0x56606D, 0xA3ACB7, 0xE5E9EE, 0xE1E5EB, 0xE0E4EA, 70, 0 };
@@ -86,7 +89,11 @@ static int by_title(const void *a, const void *b) {
 static int by_fav(const void *a, const void *b) { return (*(Game *const *)a)->fav - (*(Game *const *)b)->fav; }
 static int by_recent(const void *a, const void *b) {
     long long x = (*(Game *const *)a)->last_played, y = (*(Game *const *)b)->last_played;
-    return x < y ? 1 : x > y ? -1 : 0;
+    return x < y ? 1 : x > y ? -1 : by_title(a, b);
+}
+static int by_most(const void *a, const void *b) {
+    long x = (*(Game *const *)a)->secs, y = (*(Game *const *)b)->secs;
+    return x < y ? 1 : x > y ? -1 : by_title(a, b);
 }
 void shelves_build(void) {
     Game *keep[SH_COUNT];
@@ -99,8 +106,9 @@ void shelves_build(void) {
         if (g->fav && shn[SH_FAV] < MAXG) shelf[SH_FAV][shn[SH_FAV]++] = g;
         if (g->last_played && shn[SH_RECENT] < MAXG) shelf[SH_RECENT][shn[SH_RECENT]++] = g;
     }
-    qsort(shelf[SH_DS], (size_t)shn[SH_DS], sizeof(Game *), by_title);
-    qsort(shelf[SH_GBA], (size_t)shn[SH_GBA], sizeof(Game *), by_title);
+    int (*by)(const void *, const void *) = cfg.sort == 1 ? by_recent : cfg.sort == 2 ? by_most : by_title;
+    qsort(shelf[SH_DS], (size_t)shn[SH_DS], sizeof(Game *), by);
+    qsort(shelf[SH_GBA], (size_t)shn[SH_GBA], sizeof(Game *), by);
     qsort(shelf[SH_FAV], (size_t)shn[SH_FAV], sizeof(Game *), by_fav);
     qsort(shelf[SH_RECENT], (size_t)shn[SH_RECENT], sizeof(Game *), by_recent);
     if (shn[SH_RECENT] > 24) shn[SH_RECENT] = 24;
@@ -125,12 +133,13 @@ int repeat(int b) {
     return 0;
 }
 static int tch_up_x, tch_up_y;
+int tch_dead = -1;   /* tch_dead: a touch that was down when the page changed */
 int tapped(int x, int y, int w, int h) {
-    return tch_up && !tch_up_moved && tch.x0 >= x && tch.x0 < x + w && tch.y0 >= y && tch.y0 < y + h &&
+    return tch_up && tch.id != tch_dead && !tch_up_moved && tch.x0 >= x && tch.x0 < x + w && tch.y0 >= y && tch.y0 < y + h &&
            tch_up_x >= x - 16 && tch_up_x < x + w + 16 && tch_up_y >= y - 16 && tch_up_y < y + h + 16;
 }
 int touching(int x, int y, int w, int h) {
-    return tch.down && !tch.moved && tch.x0 >= x && tch.x0 < x + w && tch.y0 >= y && tch.y0 < y + h;
+    return tch.down && tch.id != tch_dead && !tch.moved && tch.x0 >= x && tch.x0 < x + w && tch.y0 >= y && tch.y0 < y + h;
 }
 static void touch_step(void) {
     tch_up = 0;
@@ -554,6 +563,23 @@ static void overlays_top(Surf *s) {
     }
 }
 
+/* the battery: a word when it runs low (15, 10, 5 %), a chime when the charger goes in */
+static void battery_watch(void) {
+    static double t_ = -100; static int was_chg = -1, warned = 101;
+    if (T - t_ < 20 && t_ > 0) return;
+    t_ = T;
+    int chg = 0, lv = battery_level(&chg);
+    if (lv < 0) return;
+    if (was_chg == 0 && chg) { notice("Charging"); sfx_ex(SFX_DONE, 1.0f, 0.6f); warned = 101; }
+    was_chg = chg;
+    if (chg) return;
+    static const int at[] = { 15, 10, 5 };
+    for (int i = 2; i >= 0; i--) if (lv <= at[i] && warned > at[i]) {
+        char b[64]; snprintf(b, sizeof b, "Battery low: %d%%. Time to charge.", lv);
+        notice(b); sfx(SFX_ERROR); buzz2(25, 0.4f); warned = at[i]; break;
+    }
+}
+
 /* ---------------------------------------------------------------- the system menu (START) */
 static Spr sys_k; static int sys_sel;
 static const struct { const char *label, *sub; int ic; uint32_t c; } SYSI[] = {
@@ -567,13 +593,13 @@ static const struct { const char *label, *sub; int ic; uint32_t c; } SYSI[] = {
 #define SYS_Y0 176
 #define SYS_DY 128
 #define SYS_H 112
-void sysmenu_open(void) { sysmenu = 1; sys_k.to = 1; sys_sel = 0; sfx(SFX_OPEN); dirty(0); dirty(1); }
+void sysmenu_open(void) { if (tch.down) tch_dead = tch.id; sysmenu = 1; sys_k.to = 1; sys_sel = 0; sfx(SFX_OPEN); dirty(0); dirty(1); }
 static void sysmenu_close(void) { sysmenu = 0; sys_k.to = 0; sfx(SFX_CLOSE); dirty(0); dirty(1); }
 static void start_sleep(void);
 static void sysmenu_do(int i) {
     press_hit(900 + i);
     switch (i) {
-    case 0: sysmenu = 0; sys_k.to = 0; start_sleep(); break;
+    case 0: sysmenu = 0; sys_k.to = 0; start_sleep(); buzz(30, 0.35f); break;
     case 1: sysmenu = 0; sys_k.to = 0; go_page(P_SETTINGS); break;
     case 2: sfx(SFX_BACK); exit_code = EXIT_TO_ES; break;
     case 3: sfx(SFX_SELECT); exit_code = EXIT_POWEROFF; break;
@@ -591,7 +617,7 @@ static void sysmenu_update(float dt) {
         press_touch(900 + i, SYS_X, y, SYS_W, SYS_H);
         if (tapped(SYS_X, y, SYS_W, SYS_H)) { sys_sel = i; sysmenu_do(i); return; }
     }
-    if (tch_up && !tch_up_moved && (tch.y0 < SYS_Y0 - 90 || tch.y0 > SYS_Y0 + 4 * SYS_DY)) { sysmenu_close(); return; }
+    if (tch_up && tch.id != tch_dead && !tch_up_moved && (tch.y0 < SYS_Y0 - 90 || tch.y0 > SYS_Y0 + 4 * SYS_DY)) { sysmenu_close(); return; }
     if (sys_k.x > 0.9f) focus_to(SYS_X, SYS_Y0 + sys_sel * SYS_DY, SYS_W, SYS_H, 30);
 }
 static void sysmenu_draw_bot(Surf *bot) {
@@ -636,6 +662,7 @@ static void sysmenu_draw_top(Surf *top) {
 void go_page(int p) {
     if (p == page) return;
     page_from = page; page = p; spr_set(&page_k, 0); page_k.to = 1; tr_ok = 0;
+    if (tch.down) tch_dead = tch.id;                 /* (the finger that changed the page taps nothing on the new one) */
     if (p == P_GAME) game_enter();
     if (p == P_SETTINGS) set_enter();
     if (p == P_HOME) home_enter();
@@ -672,6 +699,7 @@ static void write_launch(void) {
     else if (launch_how >= 2) snprintf(how, sizeof how, "slot %d", launch_how - 2);
     fprintf(f, "%s\n%s\n%s\n%s\n", sys_short(launch_g->sys), launch_g->path, launch_g->file, how);
     fclose(f);
+    library_mark_played(launch_g);
     cfg.sys = tab; snprintf(cfg.last[launch_g->sys], sizeof cfg.last[0], "%s", launch_g->file);
     if (tab == SH_FAV) snprintf(cfg.last_fav, sizeof cfg.last_fav, "%s", launch_g->file);
     snprintf(cfg.recent, sizeof cfg.recent, "%s", launch_g->file); cfg.recent_sys = launch_g->sys;
@@ -781,13 +809,13 @@ static void seq_update(float dt) {
     switch (seq) {
     case Q_BOOT: if (t > 1.6f) seq = Q_NONE; break;
     case Q_LAUNCH:
-        if (crossed(t, dt, L_LIFT)) sfx(SFX_LAUNCH);
+        if (crossed(t, dt, L_LIFT)) { sfx(SFX_LAUNCH); buzz(45, 0.55f); }
         if (crossed(t, dt, L_FLY - 0.1f)) sfx(SFX_IRIS_IN);
         if (t >= L_END) { write_launch(); exit_code = EXIT_LAUNCH; }
         break;
     case Q_RETURN:
         if (crossed(t, dt, 0.05f)) sfx(SFX_IRIS_OUT);
-        if (crossed(t, dt, 0.82f)) sfx(SFX_SLAM);
+        if (crossed(t, dt, 0.82f)) { sfx(SFX_SLAM); buzz(35, 0.5f); }
         if (t > 1.05f) { seq = Q_NONE; launch_g = 0; if (cfg.music) music_play(); }
         break;
     case Q_SLEEP:
@@ -903,6 +931,9 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     if (theme_changed()) home_selection_changed();
     if (art_step()) { home_selection_changed(); base_ok = 0; dirty(0); dirty(1); }
     osd_poll();
+    rumble_tick();
+    battery_watch();
+    getart_poll();
     press_step(fdt);
     if (spr_moving(&page_k, .001f)) { spr_step(&page_k, K_SNAP, C_SNAP, fdt); dirty(0); dirty(1); }
 
@@ -981,10 +1012,13 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
         if (moving && tr_ok) {
             /* the old page fades out over the new one */
             int a = (int)(256 * (1 - sat(k)));
+            /* ...and the new one comes in from the side it belongs to (deeper pages from the right) */
+            int sh = (int)((1 - ease_out_cubic(k)) * 56) * (tr_up ? 1 : -1);
             for (int y = 0; y < SH; y++) {
                 uint32_t *d = top->px + (size_t)y * top->pitch, *o = tr[0].px + (size_t)y * tr[0].pitch, *n = tr[1].px + (size_t)y * tr[1].pitch;
                 for (int x = 0; x < SW; x++) {
-                    uint32_t c = o[x], e = n[x];
+                    int xs = x - sh; xs = xs < 0 ? 0 : xs >= SW ? SW - 1 : xs;
+                    uint32_t c = o[x], e = n[xs];
                     uint32_t rb = (((c & 0xff00ff) * (uint32_t)a + (e & 0xff00ff) * (uint32_t)(256 - a)) >> 8) & 0xff00ff;
                     uint32_t g = (((c & 0x00ff00) * (uint32_t)a + (e & 0x00ff00) * (uint32_t)(256 - a)) >> 8) & 0x00ff00;
                     d[x] = rb | g;
@@ -1009,6 +1043,11 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
                     for (int x = 0; x < SW; x++) if (src[x]) d[x] = src[x];
                 } else memcpy(d, src, SW * 4);
             }
+        } else if (seq == Q_BOOT) {
+            /* the start-up: the deck rises into place as the name lifts away */
+            float r = 1 - ease_out_cubic(sat(((float)seq_t - 0.95f) / 0.55f));
+            fill(bot, pal.bg);
+            page_draw_bot(bot, page, r * 160, 255);
         } else page_draw_bot(bot, page, 0, 255);
         if (!moving && !sysmenu) focus_ring(bot);
     }
