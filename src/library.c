@@ -5,7 +5,6 @@
 #include "library.h"
 #include "config.h"
 #include "img.h"
-#include "font.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>

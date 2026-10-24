@@ -61,13 +61,14 @@ static inline void cols(uint32_t c, int k, uint32_t *row, uint32_t *gap) {
     row[k - 1] = scale(c, GAP_COL); gap[k - 1] = scale(row[k - 1], GAP_ROW);
 }
 
-int lcd_rows(const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap) {
-    if (!plat_lcd || k < 3 || k > 16) return 0;
+int lcd_rows(const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap) { return lcd_rows_mode(plat_lcd, src, w, k, row, gap); }
+int lcd_rows_mode(int mode, const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap) {
+    if (!mode || k < 3 || k > 16) return 0;
     uint32_t last = ~src[0], rr[16], gg[16];
     if (k == 4) {                                     /* the RG DS Plus: written out, the common case */
         for (int x = 0; x < w; x++, row += 4, gap += 4) {
             uint32_t c = src[x] & 0xffffff;
-            if (c != last) { last = c; cols(plat_lcd == 2 ? nds_color(c) : c, 4, rr, gg); }
+            if (c != last) { last = c; cols(mode == 2 ? nds_color(c) : c, 4, rr, gg); }
             row[0] = rr[0]; row[1] = rr[1]; row[2] = rr[2]; row[3] = rr[3];
             gap[0] = gg[0]; gap[1] = gg[1]; gap[2] = gg[2]; gap[3] = gg[3];
         }
@@ -75,8 +76,10 @@ int lcd_rows(const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap) {
     }
     for (int x = 0; x < w; x++, row += k, gap += k) {
         uint32_t c = src[x] & 0xffffff;
-        if (c != last) { last = c; cols(plat_lcd == 2 ? nds_color(c) : c, k, rr, gg); }
+        if (c != last) { last = c; cols(mode == 2 ? nds_color(c) : c, k, rr, gg); }
         memcpy(row, rr, (size_t)k * 4); memcpy(gap, gg, (size_t)k * 4);
     }
     return 1;
 }
+
+uint32_t lcd_nds_color(uint32_t c) { return nds_color(c & 0xffffff); }

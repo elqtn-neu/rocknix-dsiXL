@@ -63,7 +63,6 @@ static const GameOpt GBA_OPTS[] = {
 /* ---- BananaOS: each setting where its own Settings screen keeps it (ui/src/settings.cpp), so the two agree ----
  * A setting may go to two files (its value there in vals2, or the same): the DS's are SuperDrastic's and
  * BananaDS's, whichever of the two plays. */
-enum { KV_SPACED, KV_TIGHT, KV_QUOTED };       /* key = value (settings.conf, drastic.cfg); KEY=value; key = "value" */
 typedef struct { const char *file, *key; int style; const char *vals[GOPT_MAX]; } BTarget;
 typedef struct { GameOpt o; BTarget t[2]; } BOpt;
 #define BD "/data/banana/"
@@ -163,7 +162,7 @@ static const char *bpath(const char *p) {
     return b[k];
 }
 /* "key = value" files: the value of key (its last line), quotes off; 1 found */
-static int kv_get(const char *path, const char *key, char *out, int sz) {
+int bcfg_get(const char *path, const char *key, char *out, int sz) {
     path = bpath(path);
     FILE *f = fopen(path, "r"); if (!f) return 0;
     char ln[512]; int found = 0; size_t kl = strlen(key);
@@ -181,7 +180,7 @@ static int kv_get(const char *path, const char *key, char *out, int sz) {
     return found;
 }
 /* sets key in the file (its line replaced, a second one dropped, else added), as BananaOS's setConfValue does */
-static int kv_set(const char *path, const char *key, const char *val, int style) {
+int bcfg_set(const char *path, const char *key, const char *val, int style) {
     path = bpath(path);
     char dir[300]; snprintf(dir, sizeof dir, "%s", path); char *sl = strrchr(dir, '/');
     if (sl) { *sl = 0; char cmd[400]; snprintf(cmd, sizeof cmd, "mkdir -p '%s'", dir); if (access(dir, F_OK) && system(cmd)) {} }
@@ -195,7 +194,8 @@ static int kv_set(const char *path, const char *key, const char *val, int style)
     char tmp[400]; snprintf(tmp, sizeof tmp, "%s.new", path);
     FILE *f = fopen(tmp, "w"); if (!f) { free(text); return -1; }
     char line[600];
-    if (style == KV_TIGHT) snprintf(line, sizeof line, "%s=%s", key, val);
+    if (!val) line[0] = 0;
+    else if (style == KV_TIGHT) snprintf(line, sizeof line, "%s=%s", key, val);
     else if (style == KV_QUOTED) snprintf(line, sizeof line, "%s = \"%s\"", key, val);
     else snprintf(line, sizeof line, "%s = %s", key, val);
     int done = 0; size_t kl = strlen(key);
@@ -204,11 +204,11 @@ static int kv_set(const char *path, const char *key, const char *val, int style)
         const char *q = p; while (*q == ' ' || *q == '\t') q++;
         int mine = *q != '#' && !strncmp(q, key, kl);
         if (mine) { const char *r = q + kl; while (*r == ' ' || *r == '\t') r++; mine = *r == '='; }
-        if (mine) { if (!done) fprintf(f, "%s\n", line); done = 1; }
+        if (mine) { if (!done && val) fprintf(f, "%s\n", line); done = 1; }
         else fprintf(f, "%.*s\n", ll, p);
         p = e ? e + 1 : 0;
     }
-    if (!done) fprintf(f, "%s\n", line);
+    if (!done && val) fprintf(f, "%s\n", line);
     free(text);
     int ok = fflush(f) == 0 && fsync(fileno(f)) == 0;
     ok &= fclose(f) == 0;
@@ -226,7 +226,7 @@ static void banana_load(int sys, int *choice) {
         char v[128];
         /* the first file that has it (the DS's: SuperDrastic's, else BananaDS's) */
         for (int t = 0; t < 2 && b[i].t[t].file; t++) {
-            if (!kv_get(b[i].t[t].file, b[i].t[t].key, v, sizeof v)) continue;
+            if (!bcfg_get(b[i].t[t].file, b[i].t[t].key, v, sizeof v)) continue;
             for (int k = 0; k < b[i].o.n; k++) if (!strcmp(v, b[i].t[t].vals[0] ? b[i].t[t].vals[k] : b[i].o.values[k])) choice[i] = k;
             break;
         }
@@ -239,9 +239,9 @@ static int banana_save(int sys, const int *choice, int only_missing) {
         /* only what was changed here: a key BananaOS hasn't written yet keeps its own default */
         if (!only_missing && choice[i] == was[i]) continue;
         const BTarget *T = &b[i].t[t]; char v[128];
-        if (only_missing && kv_get(T->file, T->key, v, sizeof v)) continue;
+        if (only_missing && bcfg_get(T->file, T->key, v, sizeof v)) continue;
         int c = CLAMP(choice[i], 0, b[i].o.n - 1);
-        if (kv_set(T->file, T->key, T->vals[0] ? T->vals[c] : b[i].o.values[c], T->style)) rc = -1;
+        if (bcfg_set(T->file, T->key, T->vals[0] ? T->vals[c] : b[i].o.values[c], T->style)) rc = -1;
     }
     return rc;
 }

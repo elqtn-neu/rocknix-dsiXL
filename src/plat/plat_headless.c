@@ -14,8 +14,9 @@ static int hl_init(PlatInfo *info) {
     if (sz) sscanf(sz, "%dx%d", &pw, &ph);
     info->scale = MAX(1, MIN(pw / 256, ph / 192));
     info->panel_w = pw; info->panel_h = ph;
-    info->top_w = info->bot_w = 256;
-    info->top_h = info->bot_h = 192;
+    info->top_w = info->bot_w = plat_native ? pw : 256;
+    info->top_h = info->bot_h = plat_native ? ph : 192;
+    if (plat_native) info->scale = 1;
     info->hz = 60; info->backend = "headless";
     pi = info;
     return 0;

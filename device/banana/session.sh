@@ -28,7 +28,25 @@ export DSIXL_TOP=${BANANA_TOP:-DSI-2}
       10)
         fails=0
         SYS=$(sed -n 1p /tmp/dsixl-launch); ROM=$(sed -n 2p /tmp/dsixl-launch); FILE=$(sed -n 3p /tmp/dsixl-launch)
-        echo "$(up) launch $SYS: $ROM"
+        HOW=$(sed -n 4p /tmp/dsixl-launch)      # play (carry on where it was left), start (the title screen), slot <n>
+        B=${FILE%.*}
+        echo "$(up) launch $SYS ($HOW): $ROM"
+        # the resume point a game would carry on from: set aside for "start", a save state put there for "slot"
+        case $SYS in
+          NDS) RES=/data/drastic/savestates/$B.resume.dss ;;
+          *)   RES=; for d in /data/retroarch/states /data/states/gba /data/roms/gba; do
+                 [ -f "$d/$B.state.auto" ] && RES=$d/$B.state.auto && break; done ;;
+        esac
+        ASIDE=
+        case $HOW in
+          start) [ -n "$RES" ] && [ -f "$RES" ] && mv -f "$RES" "$RES.dsixl" && ASIDE=$RES ;;
+          slot*) n=${HOW#slot }
+                 if [ "$SYS" = NDS ] && [ -f "/data/drastic/savestates/${B}_$n.dss" ]; then
+                   [ -f "$RES" ] && mv -f "$RES" "$RES.dsixl" && ASIDE=$RES
+                   cp -f "/data/drastic/savestates/${B}_$n.dss" "$RES"
+                   export DSFLIP_RESUME_FILE="$RES" DSFLIP_RESUME_LOAD=1
+                 fi ;;
+        esac
         G0=$(cut -d' ' -f1 /proc/uptime)
         export BANANA_ROM="$ROM"
         case $SYS in
@@ -38,6 +56,11 @@ export DSIXL_TOP=${BANANA_TOP:-DSI-2}
                /usr/libexec/banana/run-retroarch "${CORE:-gpsp}" "$ROM" ;;
         esac
         echo "$(up) game ended: $?"
+        unset DSFLIP_RESUME_FILE DSFLIP_RESUME_LOAD
+        # the old resume point back, unless the game left a newer one
+        if [ -n "$ASIDE" ]; then
+          if [ -f "$ASIDE" ] && [ "$ASIDE" -nt "$ASIDE.dsixl" ]; then rm -f "$ASIDE.dsixl"; else mv -f "$ASIDE.dsixl" "$ASIDE"; fi
+        fi
         banana-perf ui
         printf '%s\t%s\t%s\t%s\n' "$SYS" "$FILE" "$(awk -v a="$G0" -v b="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "%d", b - a }')" "$(date +%s)" >> $D/data/plays.log
         ARGS= RET_SYS=$SYS RET_FILE=$FILE

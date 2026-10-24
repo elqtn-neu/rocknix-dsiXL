@@ -38,7 +38,10 @@ typedef struct {
     Buf b[2]; int front;
     int w, h, scale, ox, oy, lw, lh;
     uint64_t last_hash; int have_frame;
+    int dmg_prev[2];                    /* native: the rows the last frame sent changed (the other buffer has them) */
+    int dmg_wait[2];                    /* rows changed but not sent yet (the panel was busy) */
 } Panel;
+extern int plat_dmg_on, plat_dmg[2][2];
 
 static int fd = -1, pending;
 static Panel P[2];
@@ -258,6 +261,8 @@ static int k_init(PlatInfo *info) {
         /* whole-pixel scale: as big as fits 256x192 (the DS screen: 4x on the RG DS Plus, 2x on the RG DS) */
         p->scale = MAX(1, MIN(p->w / 256, p->h / 192));
         p->lw = 256; p->lh = 192;                         /* always the DS's own screen, centred */
+        if (plat_native) { p->scale = 1; p->lw = p->w; p->lh = p->h; }   /* (the panel's own pixels) */
+        p->dmg_prev[0] = 0; p->dmg_prev[1] = p->h; p->dmg_wait[0] = 1 << 30; p->dmg_wait[1] = 0;
         p->ox = (p->w - p->lw * p->scale) / 2; p->oy = (p->h - p->lh * p->scale) / 2;
         for (int k = 0; k < 2; k++) if (mkbuf(&p->b[k], (uint32_t)p->w, (uint32_t)p->h)) {
             plat_log("kms: dumb buffer alloc failed"); drmDropMaster(fd); close(fd); fd = -1; return -1;
@@ -307,8 +312,13 @@ static int k_init(PlatInfo *info) {
 
 /* scale a logical frame into a panel buffer: build each row once in cached memory, then copy it `scale` times
  * (the dumb buffer is write-combined: only ever write it, in long runs) */
-static void upscale(Panel *p, Buf *b, const Surf *s) {
+static void upscale_rows(Panel *p, Buf *b, const Surf *s, int y0, int y1) {
     int k = p->scale, w = MIN(s->w, p->lw), h = MIN(s->h, p->lh);
+    if (k == 1) {                                       /* native: straight copies of the rows asked for */
+        for (int y = MAX(0, y0); y < MIN(h, y1); y++)
+            memcpy((uint8_t *)b->map + (size_t)(p->oy + y) * b->pitch + (size_t)p->ox * 4, s->px + (size_t)y * s->pitch, (size_t)w * 4);
+        return;
+    }
     for (int y = 0; y < h; y++) {
         const uint32_t *src = s->px + (size_t)y * s->pitch;
         uint8_t *dst = (uint8_t *)b->map + (size_t)(p->oy + y * k) * b->pitch + (size_t)p->ox * 4;
@@ -371,20 +381,37 @@ static void k_present(Surf *top, Surf *bot) {
     if (plat_lcd != lcd_was) { lcd_was = plat_lcd; P[0].have_frame = P[1].have_frame = 0; }
     for (int i = 0; i < 2; i++) {
         Panel *p = &P[i];
-        uint64_t h = surf_hash(s[i]);
+        uint64_t h = 0;
+        int d0 = 0, d1 = p->lh;                            /* the rows to send */
+        if (plat_dmg_on && p->have_frame) {
+            /* told what changed: this frame's rows and those not sent yet; the back buffer also lacks the last frame's */
+            int n0 = MIN(plat_dmg[i][0], p->dmg_wait[0]), n1 = MAX(plat_dmg[i][1], p->dmg_wait[1]);
+            plat_dmg[i][0] = 1 << 30; plat_dmg[i][1] = 0;
+            if (n1 <= n0) { in_prev[i] = 0; continue; }   /* unchanged: it keeps its buffer */
+            p->dmg_wait[0] = n0; p->dmg_wait[1] = n1;
+            d0 = MIN(n0, p->dmg_prev[0]); d1 = MAX(n1, p->dmg_prev[1]);
+        } else {
+            plat_dmg[i][0] = 1 << 30; plat_dmg[i][1] = 0;
+            h = surf_hash(s[i]);
+            if (p->have_frame && h == p->last_hash) { in_prev[i] = 0; continue; }   /* an unchanged screen keeps its buffer */
+        }
         if (i == 0) tr_hash0 = now_s();
-        if (p->have_frame && h == p->last_hash) { in_prev[i] = 0; continue; }   /* an unchanged screen keeps its buffer */
         /* its last frame isn't up yet (the bottom panel, when its refresh comes just after the top's): a moment for
          * it, else this frame of it goes out at the next present */
         if (pending & (1 << i)) wait_flips(1 << i, 3, 0);
         if (pending & (1 << i)) { K.busy[i]++; continue; }
         double u0 = now_s();
-        upscale(p, &p->b[!p->front], s[i]);
+        upscale_rows(p, &p->b[!p->front], s[i], d0, d1);
         double u1 = now_s();
         if (i == 0) tr_scaled0 = u1;
         K.scale += u1 - u0;
         int ret = commit_panel(i);
-        if (ret == 0) { p->last_hash = h; p->have_frame = 1; sent |= 1 << i; }
+        if (ret == 0) {
+            p->last_hash = h; p->have_frame = 1; sent |= 1 << i;
+            p->dmg_prev[0] = p->dmg_wait[0]; p->dmg_prev[1] = p->dmg_wait[1];   /* (now in the front buffer only) */
+            p->dmg_wait[0] = 1 << 30; p->dmg_wait[1] = 0;
+            if (!plat_dmg_on) { p->dmg_prev[0] = 0; p->dmg_prev[1] = p->lh; }
+        }
         else if (ret == -EBUSY) K.busy[i]++;             /* its frame goes out at the next present */
         else failed = 1;
         K.commit += now_s() - u1;

@@ -22,6 +22,7 @@ typedef struct {
     int fav;                        /* a favourite: the order it was added in (1, 2, ...); 0 not one */
     int keep;                       /* ui.c's mark: art to keep this frame */
     void *cart;                     /* cart.c's texture for this game */
+    void *art;                      /* art.c's: its picture for the menu */
     uint32_t tint; int tint_state;  /* the main colour of its art (the bottom screen takes it on); 1 there, -1 none */
     int is_new;                     /* on the card since the menu last looked, not played yet ("NEW") */
     int hidden;                     /* put away (Options): not in the rows unless hidden games are shown */

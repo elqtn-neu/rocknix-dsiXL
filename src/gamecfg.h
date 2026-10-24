@@ -22,3 +22,9 @@ void gamecfg_load(int sys, int *choice);
 int gamecfg_save(int sys, const int *choice);             /* writes the system's keys; 0 on success */
 /* the recommended choices, written only where the system has none yet (the installer's first setup) */
 int gamecfg_defaults(int sys);
+
+/* BananaOS's settings files ("key = value" lines; KV_TIGHT "KEY=value", KV_QUOTED key = "value"), the way its own
+ * Settings writes them; /data may be DSIXL_DATA in tests. bcfg_set with val NULL removes the key */
+enum { KV_SPACED, KV_TIGHT, KV_QUOTED };
+int bcfg_get(const char *path, const char *key, char *out, int sz);
+int bcfg_set(const char *path, const char *key, const char *val, int style);

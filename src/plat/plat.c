@@ -74,4 +74,12 @@ double plat_frame_clock(void) { return be && be->frame_clock ? be->frame_clock()
 void plat_shutdown(void) { if (be && be->shutdown) be->shutdown(); }
 int plat_audio_start(int rate, void (*mix)(int16_t *, int)) { return be && be->audio ? be->audio(rate, mix) : -1; }
 void plat_set_title(const char *s) { (void)s; }
+int plat_native;
+int plat_dmg_on, plat_dmg[2][2] = { { 1 << 30, 0 }, { 1 << 30, 0 } };
+void plat_damage(int screen, int y0, int y1) {
+    if (screen < 0 || screen > 1 || y1 <= y0) { plat_dmg_on = 1; return; }
+    plat_dmg_on = 1;
+    if (y0 < plat_dmg[screen][0]) plat_dmg[screen][0] = y0;
+    if (y1 > plat_dmg[screen][1]) plat_dmg[screen][1] = y1;
+}
 void plat_grab_sys(int on) { if (be == &backend_kms) evdev_grab_sys(on); }
