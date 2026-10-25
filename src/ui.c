@@ -613,29 +613,31 @@ static void sysmenu_draw_bot(Surf *bot) {
     float k = sys_k.x; if (k <= 0.01f) return;
     uint32_t dim = pal.dark ? 0x000000 : 0x1b2027;
     rect_blend(bot, 0, 0, SW, SH, dim, (int)(130 * sat(k)));
-    /* the sheet rises from the bottom edge */
-    int off = (int)((1 - k) * 380);
-    int x = SYS_X - 40, y = SYS_Y0 - 100 + off, w = SYS_W + 80, h = SH - y + 60;
-    hr_shadow(bot, x, y, w, h, 44, 30, -6, (int)(pal.shadow_a * 1.4f * sat(k)));
-    hr_fill(bot, x, y, w, h, 44, pal.bg, 255);
-    hr_fill(bot, SW / 2 - 40, y + 16, 80, 8, 4, pal.track, 255);
-    ht(bot, HF_CAPS, SYS_X + 8, y + 48, pal.sub, 255, 3, "HANDHELD");
+    /* a DSi window rises, its buttons in it */
+    int off = (int)((1 - k) * 420);
+    int x = SYS_X - 40, y = SYS_Y0 - 104 + off, w = SYS_W + 80, h = 4 * SYS_DY + 104 + 8;
+    dsi_window(bot, x, y, w, h, "HANDHELD", 255);
+    Accent ac = dsi_accent();
     for (int i = 0; i < 4; i++) {
         float p = press_of(900 + i);
-        int d = (int)(p * 6), by = SYS_Y0 + i * SYS_DY + off;
-        card(bot, SYS_X + d, by + d + (int)(p * 2), SYS_W - 2 * d, SYS_H - 2 * d, 30, (int)(5 - p * 4));
-        uint32_t ic = SYSI[i].c ? SYSI[i].c : pal.sub;
-        hi_circle(bot, SYS_X + 62.f, by + SYS_H / 2.f, 34, 0, h_mix(ic, pal.card, 0.84f), 255);
-        icon(bot, SYSI[i].ic, SYS_X + 62.f, by + SYS_H / 2.f, 36, ic, 255);
-        int ty = SYSI[i].sub[0] ? by + SYS_H / 2 - ht_h(HF_LABEL) / 2 - 15 : by + SYS_H / 2 - ht_h(HF_LABEL) / 2;
-        ht(bot, HF_LABEL, SYS_X + 120, ty, i == 3 ? 0xD93A40 : pal.text, 255, 0, SYSI[i].label);
-        if (SYSI[i].sub[0]) ht(bot, HF_SMALL, SYS_X + 120, ty + ht_h(HF_LABEL) + 2, pal.sub, 255, 0, SYSI[i].sub);
+        int by = SYS_Y0 + i * SYS_DY + off + 4;
+        dsi_face(bot, SYS_X, by, SYS_W, SYS_H, 26, i == sys_sel, p, 255);
+        by += (int)(p * 4);
+        uint32_t ic = SYSI[i].c ? SYSI[i].c : ac.base;
+        hi_circle(bot, SYS_X + 62.f, by + SYS_H / 2.f, 38, 0, h_mix(ic, 0x000000, 0.25f), 255);
+        hi_circle(bot, SYS_X + 62.f, by + SYS_H / 2.f, 36, 0, ic, 255);
+        hi_circle(bot, SYS_X + 62.f, by + SYS_H / 2.f - 14, 22, 0, 0xffffff, 50);
+        icon(bot, SYSI[i].ic, SYS_X + 62.f, by + SYS_H / 2.f, 38, 0xffffff, 255);
+        int ty = SYSI[i].sub[0] ? by + SYS_H / 2 - ht_h(HF_MD) / 2 - 20 : by + SYS_H / 2 - ht_h(HF_MD) / 2;
+        ht(bot, HF_MD, SYS_X + 124, ty, i == 3 ? 0xc8343a : D_TEXT, 255, 0, SYSI[i].label);
+        if (SYSI[i].sub[0]) ht(bot, HF_XS, SYS_X + 124, ty + ht_h(HF_MD) - 4, D_TEXT_SOFT, 255, 0, SYSI[i].sub);
+        if (i == sys_sel) dsi_glyph(bot, SYS_X + SYS_W - 68, by + SYS_H / 2 - 22, "A", ac.base, 255);
     }
 }
 static void sysmenu_draw_top(Surf *top) {
     float k = sys_k.x; if (k <= 0.01f) return;
     int a = (int)(255 * sat(k));
-    rect_blend(top, 0, 0, SW, SH, pal.dark ? 0x000000 : 0x1b2027, (int)(205 * sat(k)));
+    rect_blend(top, 0, 0, SW, SH, pal.dark ? 0x000000 : 0x1b2027, (int)(232 * sat(k)));
     /* the top screen: the time, big */
     char tm[24], date[32]; time_text(tm, sizeof tm, date, sizeof date);
     ht_center(top, HF_CLOCK, SW / 2, 220 + (int)((1 - k) * 40), 0xffffff, a, 0, tm);

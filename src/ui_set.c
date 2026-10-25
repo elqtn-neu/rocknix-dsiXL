@@ -6,13 +6,15 @@
 #include "gamecfg.h"
 #include "power.h"
 #include "job.h"
+#include "dsi.h"
+#include "plat/plat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-enum { R_HDR, R_EMU, R_BRI, R_THEME, R_COLOR, R_SFX, R_MUSIC, R_RUMBLE, R_SORT, R_ART, R_CLOCK, R_DIM, R_OFF, R_ABOUT };
+enum { R_HDR, R_EMU, R_BRI, R_THEME, R_COLOR, R_SFX, R_MUSIC, R_RUMBLE, R_SORT, R_ART, R_CLOCK, R_DIM, R_OFF, R_ABOUT, R_LCD };
 typedef struct { int kind, sys, opt; const char *label, *help; } Row;
 static Row rows[40]; static int nr, foc = 1;
 static Spr scroll;                      /* the list's offset (pixels) */
@@ -29,6 +31,7 @@ static const char *DIM_N[] = { "Never", "30 seconds", "1 minute", "2 minutes", "
 static const int OFF_S[] = { 0, 60, 120, 300, 600 };
 static const char *OFF_N[] = { "Never", "1 minute", "2 minutes", "5 minutes", "10 minutes" };
 static const char *THEME_N[] = { "By the clock", "Light", "Night" };
+static const char *LCD_N[] = { "Plain pixels", "DSi LCD", "DSi LCD + DS colors" };
 
 static void add(int kind, int sys, int opt, const char *label, const char *help) {
     if (nr < 40) rows[nr++] = (Row){ kind, sys, opt, label, help };
@@ -43,6 +46,8 @@ void set_enter(void) {
     int o;
     add(R_HDR, 0, 0, "SCREENS", 0);
     if ((o = find_opt(SYS_NDS, "shader")) >= 0) add(R_EMU, SYS_NDS, o, "DS screen look", 0);
+    add(R_LCD, 0, 0, "Menu screen look", "How this menu looks on the panels: plain pixels, or a DSi's LCD with its fine grid "
+                                         "and colour stripes (and, with DS colors, a DS screen's softer colours).");
     add(R_BRI, 0, 0, "Brightness", "How bright both screens are. The sun on the home screen steps through it too.");
     add(R_THEME, 0, 0, "Theme", "By the clock: light in the day, night from seven in the evening to seven in the morning.");
     add(R_COLOR, 0, 0, "Your color", "Your DS favorite color: the menu's buttons, the focus, the highlights.");
@@ -147,6 +152,7 @@ static void value_text(const Row *r, char *out, int n) {
     switch (r->kind) {
     case R_EMU: snprintf(out, (size_t)n, "%s", opts[r->sys][r->opt].names[choice[r->sys][r->opt]]); break;
     case R_THEME: snprintf(out, (size_t)n, "%s", THEME_N[CLAMP(cfg.theme, 0, 2)]); break;
+    case R_LCD: snprintf(out, (size_t)n, "%s", LCD_N[CLAMP(cfg.lcd, 0, 2)]); break;
     case R_COLOR: snprintf(out, (size_t)n, "%s", fav_color_name(cfg.color)); break;
     case R_SFX: snprintf(out, (size_t)n, cfg.sfx ? "On" : "Off"); break;
     case R_MUSIC: snprintf(out, (size_t)n, cfg.music ? "On" : "Off"); break;
@@ -177,6 +183,7 @@ static int step(int i, int d) {
         return 2;
     }
     case R_THEME: cfg.theme = (cfg.theme + d + 3) % 3; config_save(); theme_update(); break;
+    case R_LCD: cfg.lcd = (cfg.lcd + d + 3) % 3; config_save(); plat_set_lcd(cfg.lcd); break;
     case R_COLOR: cfg.color = (cfg.color + d + 16) % 16; config_save(); theme_update(); break;
     case R_SFX: cfg.sfx = !cfg.sfx; config_save(); break;
     case R_MUSIC: cfg.music = !cfg.music; config_save(); if (cfg.music) music_play(); else music_fade(0, 0.4f); break;
@@ -199,105 +206,167 @@ static void change(int i, int d) {
 }
 
 /* ---------------------------------------------------------------- the top screen */
+static const char *section_of(int i) {
+    while (i > 0 && rows[i].kind != R_HDR) i--;
+    return rows[i].label;
+}
 void set_draw_top(Surf *s) {
     surf_noclip(s);
-    rect_vgrad(s, 0, 0, SW, SH, h_mix(pal.bg, accent, pal.dark ? 0.14f : 0.12f), pal.bg, 255);
+    if (pal.dark) dsi_bg_dark(s, accent, 0.3f, 0); else dsi_bg_top(s, 0, 0);
+    uint32_t tx = pal.dark ? 0xdfe3e8 : D_TEXT, sub = pal.dark ? 0x9aa2ad : D_TEXT_SOFT;
     time_t t = time(0); struct tm lt; localtime_r(&t, &lt);
     if (getenv("DSIXL_FAKE_TIME")) { lt.tm_hour = atoi(getenv("DSIXL_FAKE_TIME")); lt.tm_min = 42; lt.tm_wday = 6; lt.tm_mday = 24; lt.tm_mon = 9; }
     char tm[16], date[64];
     if (clock24()) snprintf(tm, sizeof tm, "%d:%02d", lt.tm_hour, lt.tm_min);
     else snprintf(tm, sizeof tm, "%d:%02d", lt.tm_hour % 12 ? lt.tm_hour % 12 : 12, lt.tm_min);
     strftime(date, sizeof date, "%A, %e %B", &lt);
-    int e = ht(s, HF_CLOCK, 64, 96, pal.text, 255, -2, tm);
-    if (!clock24()) ht(s, HF_TITLE, e + 16, 96 + ht_h(HF_CLOCK) - ht_h(HF_TITLE) - 22, pal.sub, 255, 0, lt.tm_hour < 12 ? "AM" : "PM");
-    ht(s, HF_TITLE, 70, 96 + ht_h(HF_CLOCK) - 6, pal.sub, 255, 0, date[0] == ' ' ? date + 1 : date);
-    /* what the focused one does */
+    /* the clock as the DSi's: big, its digits outlined white on the stripes */
+    int cw = ht_w(HF_CLOCK, tm, -2), cx = (SW - cw) / 2 - (clock24() ? 0 : 40), cy = 64;
+    for (int o = 0; o < 8; o++) {
+        float an = o * 0.785f;
+        ht(s, HF_CLOCK, cx + (int)(cosf(an) * 5), cy + (int)(sinf(an) * 5), pal.dark ? 0x101418 : 0xffffff, 255, -2, tm);
+    }
+    ht(s, HF_CLOCK, cx + 4, cy + 6, 0x000000, 40, -2, tm);
+    int e = ht(s, HF_CLOCK, cx, cy, tx, 255, -2, tm);
+    if (!clock24()) ht(s, HF_BD, e + 14, cy + ht_h(HF_CLOCK) - ht_h(HF_BD) - 26, sub, 255, 0, lt.tm_hour < 12 ? "AM" : "PM");
+    ht_center(s, HF_MD, SW / 2, cy + ht_h(HF_CLOCK) - 4, sub, 255, 0, date[0] == ' ' ? date + 1 : date);
+    /* what the focused one does, in a window titled by its section */
     if (foc < 0 || foc >= nr) return;
     Row *r = &rows[foc];
-    card(s, 64, 404, SW - 128, 300, 28, 6);
-    int x = 104, w = SW - 128 - 80;
+    int wx = 56, wy = 360, ww = SW - 112, wh = 360;
+    dsi_window(s, wx, wy, ww, wh, section_of(foc), 255);
+    int x = wx + 36, w = ww - 72, y = wy + 80 + 24;
     if (r->kind == R_COLOR) {
-        hi_circle(s, 64 + 40 + 70.f, 404 + 150.f, 70, 0, accent, 255);
-        x += 170; w -= 170;
+        hi_circle(s, wx + 36 + 56.f, y + 76.f, 58, 0, 0xffffff, 255);
+        hi_circle(s, wx + 36 + 56.f, y + 76.f, 54, 0, accent, 255);
+        hi_circle(s, wx + 36 + 40.f, y + 58.f, 16, 0, 0xffffff, 90);
+        x += 140; w -= 140;
     }
-    ht(s, HF_CAPS, x, 444, accent_text(), 255, 3, r->kind == R_EMU ? (r->sys == SYS_NDS ? "NINTENDO DS" : "GAME BOY ADVANCE") : "SETTINGS");
     char v[96]; value_text(r, v, sizeof v);
-    ht(s, HF_TITLE, x, 476, pal.text, 255, 0, r->kind == R_BRI ? "Brightness" : r->label);
+    ht(s, HF_BD, x, y, D_TEXT, 255, 0, r->label);
     const char *help = r->help, *note = 0;
     if (r->kind == R_EMU) { const GameOpt *o = &opts[r->sys][r->opt]; help = o->help; note = o->notes[choice[r->sys][r->opt]]; }
-    int y = 476 + ht_h(HF_TITLE) + 12;
-    if (help) y += 34 * ht_wrap(s, HF_BODY, x, y, w, 34, 3, pal.sub, 255, help) + 8;
+    y += ht_h(HF_BD) + 10;
+    if (help) y += 38 * ht_wrap(s, HF_XS, x, y, w, 38, 3, D_TEXT_SOFT, 255, help) + 10;
     if (note) {
         char b[200]; snprintf(b, sizeof b, "%s: %s", v, note);
-        ht_wrap(s, HF_BODYB, x, y, w, 34, 2, pal.text, 255, b);
+        ht_wrap(s, HF_XS, x, y, w, 38, 2, D_TEXT, 255, b);
     }
     if (r->kind == R_ART && (art_ran || art_status[0])) {
-        ht(s, HF_BODYB, x, y, pal.text, 255, 0, art_status);
+        ht(s, HF_XS, x, y, D_TEXT, 255, 0, art_status);
         if (art_ran) {
-            hr_fill(s, x, y + 46, w, 14, 7, pal.track, 255);
-            if (art_prog >= 0) hr_fill(s, x, y + 46, MAX(14, (int)(w * art_prog)), 14, 7, accent, 255);
-            else { int bw = w / 4, bx = x + (int)((w - bw) * (0.5f + 0.5f * sinf((float)T * 2.4f))); hr_fill(s, bx, y + 46, bw, 14, 7, accent, 255); }
+            Accent a = dsi_accent();
+            hr_fill(s, x, y + 46, w, 18, 9, 0xd8d8d8, 255);
+            if (art_prog >= 0) hr_vgrad(s, x, y + 46, MAX(18, (int)(w * art_prog)), 18, 9, a.light, a.base, 255);
+            else { int bw = w / 4, bx = x + (int)((w - bw) * (0.5f + 0.5f * sinf((float)T * 2.4f))); hr_vgrad(s, bx, y + 46, bw, 18, 9, a.light, a.base, 255); }
         }
     }
     if (r->kind == R_ABOUT) {
         char b[160]; float fg = 0, tg = 0;
         snprintf(b, sizeof b, "%d DS games, %d GBA games", lib[SYS_NDS].n, lib[SYS_GBA].n);
-        ht(s, HF_BODYB, x, y, pal.text, 255, 0, b);
-        if (!disk_free_gb(bpath("/data"), &fg, &tg)) { snprintf(b, sizeof b, "%.1f GB free of %.0f GB on the card", fg, tg); ht(s, HF_BODY, x, y + 38, pal.sub, 255, 0, b); }
+        ht(s, HF_XS, x, y, D_TEXT, 255, 0, b);
+        if (!disk_free_gb(bpath("/data"), &fg, &tg)) { snprintf(b, sizeof b, "%.1f GB free of %.0f GB on the card", fg, tg); ht(s, HF_XS, x, y + 40, D_TEXT_SOFT, 255, 0, b); }
     }
 }
 
 /* ---------------------------------------------------------------- the bottom screen */
+/* a value's arrows: little accent triangles, as the DSi's settings have */
+static void tri(Surf *s, float cx, float cy, int dir, uint32_t c, int a) {
+    float t[6] = { cx - dir * 9.f, cy - 13, cx - dir * 9.f, cy + 13, cx + dir * 11.f, cy };
+    hi_poly(s, t, 3, c, a);
+}
 void set_draw_bot(Surf *s, float yoff, int alpha) {
     int Y = (int)yoff; (void)alpha;
-    if (Y > 0) hr_shadow(s, 0, Y, SW, SH, 40, 30, -8, 120);
-    hr_fill(s, 0, Y, SW, SH - Y + 60, Y > 0 ? 40 : 0, pal.bg, 255);
+    Surf bg = *s; if (Y > 0) surf_clip(&bg, 0, Y, SW, SH - Y);
+    if (pal.dark) dsi_bg_dark(&bg, accent, 0.3f, 0); else dsi_bg_bottom(&bg, accent, 0.25f, 0);
+    if (Y > 0) { rect_blend(s, 0, Y, SW, 6, 0xffffff, 160); rect_blend(s, 0, Y + 6, SW, 3, 0x000000, 30); }
+    Accent ac = dsi_accent();
     /* the list, under the header */
     Surf c = *s; surf_clip(&c, 0, Y + LIST_Y - 8, SW, SH - LIST_Y + 8);
     int sy = (int)scroll.x;
     for (int i = 0; i < nr; i++) {
         Row *r = &rows[i];
         int y = Y + LIST_Y + row_y(i) - sy, h = r->kind == R_HDR ? HDR_H : ROW_H;
+        if (r->kind == R_HDR) {
+            /* the section: its heading, then one white panel holding its rows */
+            int n = 0; while (i + 1 + n < nr && rows[i + 1 + n].kind != R_HDR) n++;
+            int py = y + HDR_H, ph = n * ROW_H - 8;
+            if (py > SH || py + ph < Y + LIST_Y - 20) { if (y > SH) break; continue; }
+            if (y + h > Y + LIST_Y - 20) dsi_section(&c, 44, y + 18, SW - 88, r->label, 255);
+            hr_shadow(&c, 32, py, SW - 64, ph, 22, 14, 6, pal.dark ? 160 : 60);
+            hr_ring(&c, 30, py - 2, SW - 60, ph + 4, 24, 2, pal.dark ? 0x3a4048 : 0xb8b8b8, 255);
+            hr_vgrad(&c, 32, py, SW - 64, ph, 22, pal.dark ? 0x2c3138 : 0xffffff, pal.dark ? 0x24282e : 0xf1f1f1, 255);
+            continue;
+        }
         if (y > SH || y + h < Y + LIST_Y - 20) continue;
-        if (r->kind == R_HDR) { ht(&c, HF_CAPS, 48, y + 28, pal.sub, 255, 3, r->label); continue; }
-        int first = i == 0 || rows[i - 1].kind == R_HDR, last = i == nr - 1 || rows[i + 1].kind == R_HDR;
+        int last = i == nr - 1 || rows[i + 1].kind == R_HDR, first = rows[i - 1].kind == R_HDR;
         float p = press_of(500 + i);
-        /* the rows of a section are one card */
-        int top = y + (first ? 0 : -20), bot = y + ROW_H - 8 + (last ? 0 : 20);
-        hr_fill(&c, 32, top, SW - 64, bot - top, first || last ? 24 : 0, h_mix(pal.card, pal.track, p * 0.6f), 255);
-        if (first) hr_fill(&c, 32, y, SW - 64, ROW_H - 8 + (last ? 0 : 20), 24, h_mix(pal.card, pal.track, p * 0.6f), 255);
-        if (!last) hr_fill(&c, 56, y + ROW_H - 4, SW - 112, 2, 1, pal.line, 255);
-        int my = y + (ROW_H - 8) / 2;
-        ht(&c, HF_LABEL, 60, my - ht_h(HF_LABEL) / 2, pal.text, 255, 0, r->label);
+        uint32_t tx = pal.dark ? 0xdfe3e8 : D_TEXT, sub = pal.dark ? 0x9aa2ad : D_TEXT_SOFT;
+        if (i == foc || p > 0) {
+            /* the focused row lit in the accent's palest, as the DSi marks the line it's on */
+            int ry = y + (first ? 4 : 0), rh = ROW_H - 8 - (first ? 4 : 0) - (last ? 4 : 0) + (last ? 0 : 4);
+            hr_vgrad(&c, 36, ry, SW - 72, rh, first || last ? 18 : 6, h_mix(ac.pale, 0xffffff, 0.3f), ac.pale, pal.dark ? 60 : 255);
+            if (p > 0) hr_fill(&c, 36, ry, SW - 72, rh, 6, ac.base, (int)(p * 50));
+        }
+        if (!last) { rect_blend(&c, 56, y + ROW_H - 9, SW - 112, 2, 0xc8c8c8, pal.dark ? 80 : 255); rect_blend(&c, 56, y + ROW_H - 7, SW - 112, 2, 0xffffff, pal.dark ? 0 : 255); }
+        int my = y + (ROW_H - 8) / 2 + (int)(p * 3);
+        ht(&c, HF_MD, 64, my - ht_h(HF_MD) / 2, tx, 255, 0, r->label);
         int vx = SW - 64 - (int)val_k[i].x;
         if (r->kind == R_BRI) {
-            for (int j = 0; j < 5; j++) hr_fill(&c, vx - 5 * 62 + j * 62 + 8, my - 14, 52, 28, 10, j < bri_lv ? 0xE0A020 : pal.track, 255);
+            for (int j = 0; j < 5; j++) {
+                int bx = vx - 5 * 58 + j * 58 + 8, bh = 18 + j * 6;
+                hr_fill(&c, bx - 1, my + 16 - bh - 1, 46, bh + 2, 6, j < bri_lv ? h_mix(ac.dark, 0, 0.1f) : 0xc0c0c0, 255);
+                if (j < bri_lv) hr_vgrad(&c, bx, my + 16 - bh, 44, bh, 5, ac.light, ac.base, 255);
+                else hr_fill(&c, bx, my + 16 - bh, 44, bh, 5, 0xe8e8e8, 255);
+            }
         } else if (r->kind == R_SFX || r->kind == R_MUSIC || r->kind == R_RUMBLE) {
+            /* On | Off: two buttons, the chosen one pressed in the accent */
             int on = r->kind == R_SFX ? cfg.sfx : r->kind == R_MUSIC ? cfg.music : cfg.rumble;
-            hr_fill(&c, vx - 92, my - 24, 92, 48, 24, on ? accent_ink : pal.track, 255);
-            hi_circle(&c, (float)(vx - (on ? 24 : 68)), (float)my, 19, 0, 0xffffff, 255);
+            for (int k = 0; k < 2; k++) {
+                int bx = vx - 2 * 104 + k * 104 + 4, sel = k == 0 ? on : !on;
+                if (sel) dsi_face_main(&c, bx, my - 28, 96, 56, 16, 0.6f, 255);
+                else dsi_face(&c, bx, my - 28, 96, 56, 16, 0, 0, 255);
+                ht_center(&c, HF_XS, bx + 48, my - ht_h(HF_XS) / 2 + (sel ? 2 : 0), sel ? 0xffffff : D_TEXT_SOFT, 255, 0, k ? "Off" : "On");
+            }
         } else {
             char v[96]; value_text(r, v, sizeof v);
-            int arrows = r->kind != R_ABOUT;
-            int e = ht_right(&c, HF_BODYB, vx - (arrows ? 34 : 0), my - ht_h(HF_BODYB) / 2, i == foc ? pal.text : pal.sub, 255, 0, v);
-            (void)e;
-            if (arrows) icon(&c, IC_RIGHT, vx - 12.f, (float)my, 24, pal.faint, 255);
-            if (r->kind == R_COLOR) hi_circle(&c, (float)(vx - 34 - ht_w(HF_BODYB, v, 0) - 28), (float)my, 14, 0, accent, 255);
+            int arrows = r->kind != R_ABOUT && r->kind != R_ART;
+            int vw = ht_w(HF_XS, v, 0);
+            if (r->kind == R_ART) {
+                dsi_face_main(&c, vx - vw - 48, my - 28, vw + 48, 56, 16, p, 255);
+                ht(&c, HF_XS, vx - vw - 24, my - ht_h(HF_XS) / 2 + (int)(p * 4), 0xffffff, 255, 0, v);
+            } else {
+                int x1 = vx - (arrows ? 30 : 0);
+                ht_right(&c, HF_XS, x1, my - ht_h(HF_XS) / 2, i == foc ? tx : sub, 255, 0, v);
+                if (arrows) {
+                    int a = i == foc ? 255 : 110;
+                    tri(&c, vx - 10.f, (float)my, 1, ac.base, a);
+                    tri(&c, x1 - vw - 22.f, (float)my, -1, ac.base, a);
+                }
+                if (r->kind == R_COLOR) {
+                    float ccx = x1 - vw - (arrows ? 60 : 30.f);
+                    hi_circle(&c, ccx, (float)my, 17, 0, 0xffffff, 255);
+                    hi_circle(&c, ccx, (float)my, 14, 0, accent, 255);
+                }
+            }
         }
     }
-    /* the header (over the list) */
-    hr_fill(s, 0, Y, SW, LIST_Y - 10, Y > 0 ? 40 : 0, pal.bg, 255);
-    float p = press_of(499); int d = (int)(p * 5);
-    card(s, 32 + d, Y + 24 + d, 210 - 2 * d, 84 - 2 * d, 26, (int)(5 - 4 * p));
-    icon(s, IC_BACK, 70.f, Y + 66.f, 30, pal.text, 255);
-    ht(s, HF_LABEL, 94, Y + 66 - ht_h(HF_LABEL) / 2, pal.text, 255, 0, "Back");
-    key_cap(s, 32 + 210 - 38, Y + 66, 18, "B", pal.chip, pal.sub);
-    ht(s, HF_TITLE, 270, Y + 66 - ht_h(HF_TITLE) / 2, pal.text, 255, 0, "Settings");
-    /* a scroll bar while it moves */
+    /* the header (over the list): Back, the title */
+    Surf hb = *s; surf_clip(&hb, 0, Y, SW, LIST_Y - 10);
+    if (pal.dark) dsi_bg_dark(&hb, accent, 0.3f, 0); else dsi_bg_bottom(&hb, accent, 0.25f, 0);
+    rect_blend(s, 0, Y + LIST_Y - 12, SW, 2, 0x000000, 30);
+    rect_blend(s, 0, Y + LIST_Y - 10, SW, 2, 0xffffff, 200);
+    float p = press_of(499);
+    dsi_button(s, 32, Y + 24, 210, 84, "Back", "B", 0, p, 255);
+    dsi_round(s, 300.f, Y + 66.f, 34, 0, 255);
+    icon(s, IC_GEAR, 300.f, Y + 66.f, 40, ac.base, 255);
+    ht(s, HF_BD, 350, Y + 66 - ht_h(HF_BD) / 2, pal.dark ? 0xdfe3e8 : D_TEXT, 255, 0, "Settings");
+    /* the scroll bar: a thin accent rail with its thumb */
     int lh = list_h(), vh = SH - LIST_Y;
-    if (lh > vh && (spr_moving(&scroll, .5f) || dragging)) {
-        int bh = vh * vh / lh, by = LIST_Y + (int)((vh - bh) * scroll.x / (lh - vh));
-        hr_fill(s, SW - 14, Y + by, 6, bh, 3, pal.faint, 200);
+    if (lh > vh) {
+        int bh = MAX(60, vh * vh / lh), by = LIST_Y + (int)((vh - bh) * clampf(scroll.x / (lh - vh), 0, 1));
+        hr_fill(s, SW - 18, Y + LIST_Y + 4, 8, vh - 8, 4, 0x000000, 30);
+        hr_vgrad(s, SW - 20, Y + by, 12, bh, 6, ac.light, ac.base, spr_moving(&scroll, .5f) || dragging ? 255 : 170);
     }
 }
 
@@ -355,5 +424,5 @@ void set_update(float dt) {
         }
     }
     int y = LIST_Y + row_y(foc) - (int)scroll.x;
-    if (y >= LIST_Y - 10 && y < SH) focus_to(32, y, SW - 64, ROW_H - 8, 24);
+    (void)y;
 }

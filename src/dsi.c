@@ -73,8 +73,10 @@ static void bg(Surf *s, int kind, uint32_t tint, float amt, float par) {
         make_bg(&b->s, kind, tint, amt);
     }
     int off = ((int)floorf(par) % PER + PER) % PER;
-    for (int y = 0; y < MIN(s->h, H); y++)
-        memcpy(s->px + (size_t)y * s->pitch, b->s.px + (size_t)y * b->s.pitch + off, (size_t)MIN(s->w, W) * 4);
+    int x0 = MAX(s->cx0, 0), x1 = MIN(s->cx1, W), y1 = MIN(s->cy1, H);
+    if (x1 <= x0) return;
+    for (int y = MAX(s->cy0, 0); y < y1; y++)
+        memcpy(s->px + (size_t)y * s->pitch + x0, b->s.px + (size_t)y * b->s.pitch + off + x0, (size_t)(x1 - x0) * 4);
 }
 void dsi_bg_top(Surf *s, uint32_t tint, float amt) { bg(s, 0, tint, amt, 0); }
 void dsi_bg_bottom(Surf *s, uint32_t tint, float amt, float par) { bg(s, 1, tint, amt, par); }
@@ -248,6 +250,22 @@ static void btn_face(Surf *s, int x, int y, int w, int h, int r, uint32_t edge, 
     hr_fill(s, x, y, w, h, r, edge, alpha);
     hr_vgrad(s, x + 4, y + 4, w - 8, h - 8, r - 4, top, bot, alpha);
     hr_vgrad(s, x + 6, y + 6, w - 12, (h - 12) / 2, r - 6, 0xffffff, 0xffffff, alpha * (int)(70 - press * 40) / 255);
+}
+void dsi_face(Surf *s, int x, int y, int w, int h, int r, int focus, float press, int alpha) {
+    Accent a = dsi_accent();
+    btn_face(s, x, y + (int)(press * 4), w, h, r, focus ? a.base : 0xb8b8b8, press > 0.5f ? 0xe4e4e4 : 0xffffff, focus ? a.pale : 0xe9e9e9, press, alpha);
+}
+void dsi_face_main(Surf *s, int x, int y, int w, int h, int r, float press, int alpha) {
+    Accent a = dsi_accent();
+    btn_face(s, x, y + (int)(press * 4), w, h, r, a.dark, press > 0.5f ? a.base : a.light, h_mix(a.base, 0x000000, 0.1f), press, alpha);
+}
+void dsi_section(Surf *s, int x, int y, int w, const char *text, int alpha) {
+    int e = ht(s, HF_XS, x, y, 0x8a8a8a, alpha, 3, text);
+    int ly = y + ht_h(HF_XS) / 2 + 2;
+    if (x + w - e - 24 > 20) {
+        rect_blend(s, e + 20, ly - 2, x + w - e - 20, 3, 0xb4bcc4, alpha * 160 / 255);
+        rect_blend(s, e + 20, ly + 1, x + w - e - 20, 3, 0xffffff, alpha * 220 / 255);
+    }
 }
 void dsi_button(Surf *s, int x, int y, int w, int h, const char *label, const char *key, int focus, float press, int alpha) {
     Accent a = dsi_accent();

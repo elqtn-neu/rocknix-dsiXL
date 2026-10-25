@@ -38,6 +38,11 @@ void dsi_window(Surf *s, int x, int y, int w, int h, const char *title, int alph
 void dsi_button(Surf *s, int x, int y, int w, int h, const char *label, const char *key, int focus, float press, int alpha);
 /* the accent button (the one that starts things) */
 void dsi_button_main(Surf *s, int x, int y, int w, int h, const char *label, const char *key, float press, int alpha);
+/* the faces alone (a button with things of its own drawn on it): white, or the accent */
+void dsi_face(Surf *s, int x, int y, int w, int h, int r, int focus, float press, int alpha);
+void dsi_face_main(Surf *s, int x, int y, int w, int h, int r, float press, int alpha);
+/* a section's heading: small grey capitals, a thin rule after them */
+void dsi_section(Surf *s, int x, int y, int w, const char *text, int alpha);
 /* a round icon button (the sun, the gear) */
 void dsi_round(Surf *s, float cx, float cy, float r, float press, int alpha);
 /* the console's emblem pressed into the plastic, with thin rules either side: sys 0 DS, 1 GBA, 2 favourites, 3 recent */

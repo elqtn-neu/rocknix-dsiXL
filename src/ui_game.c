@@ -6,6 +6,7 @@
 #include "ui_int.h"
 #include "img.h"
 #include "gamecfg.h"
+#include "dsi.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -144,25 +145,28 @@ static void preview_make(const Img *src, int lk) {
 }
 void game_draw_top(Surf *s) {
     surf_noclip(s);
-    if (!G) { fill(s, pal.bg); return; }
-    Art *A = art_get(G);
-    uint32_t v = A && A->state ? A->vivid : accent;
-    rect_vgrad(s, 0, 0, SW, SH, h_mix(pal.bg, v, pal.dark ? 0.2f : 0.15f), pal.bg, 255);
-    hr_shadow(s, 56, 96, 300, 330, 24, 36, 18, pal.dark ? 190 : 100);
-    game_cover(s, G, 56, 96, 300, 330, 24, 255);
-    ht_wrap(s, HF_LABEL, 56, 446, 300, 36, 3, pal.text, 255, G->title);
-    if (G->sub[0]) ht_wrap(s, HF_SMALL, 56, 446 + 36 * ht_wrap_lines(HF_LABEL, 300, 3, G->title) + 6, 300, 28, 2, pal.sub, 255, G->sub);
-    /* the look, on its pixels */
+    if (pal.dark) dsi_bg_dark(s, accent, 0.3f, 0); else dsi_bg_top(s, 0, 0);
+    if (!G) return;
+    uint32_t tx = pal.dark ? 0xdfe3e8 : D_TEXT, sub = pal.dark ? 0x9aa2ad : D_TEXT_SOFT;
+    /* the cover as a photo, the name under it */
+    hr_shadow(s, 48, 88, 316, 346, 12, 24, 14, pal.dark ? 200 : 90);
+    hr_fill(s, 48, 88, 316, 346, 12, 0xffffff, 255);
+    hr_ring(s, 48, 88, 316, 346, 12, 2, 0xd0d0d0, 255);
+    game_cover(s, G, 58, 98, 296, 326, 4, 255);
+    ht_wrap(s, HF_BD, 48, 456, 320, 46, 3, tx, 255, G->title);
+    if (G->sub[0]) ht_wrap(s, HF_XS, 48, 456 + 46 * ht_wrap_lines(HF_BD, 320, 3, G->title) + 8, 320, 38, 2, sub, 255, G->sub);
+    /* the look, on the game's own pixels, in a DS's screen bezel */
     const Img *px = pixels();
     int lk = eff_look();
     if (px && (preview_look != lk || preview_src != px || preview_g != G)) { preview_make(px, lk); preview_look = lk; preview_src = px; preview_g = G; }
-    hr_shadow(s, 404, 96, PV_W, PV_H, 18, 36, 18, pal.dark ? 190 : 100);
-    if (px && preview.px) hb_blit(s, &preview, 404, 96, 255);
-    else { hr_fill(s, 404, 96, PV_W, PV_H, 18, 0x0d0f13, 255); ht_center(s, HF_BODY, 404 + PV_W / 2, 96 + PV_H / 2 - 16, 0x8a919c, 255, 0, "Its picture is on the way"); }
+    hr_shadow(s, 392, 76, PV_W + 24, PV_H + 24, 28, 24, 12, pal.dark ? 200 : 100);
+    hr_vgrad(s, 392, 76, PV_W + 24, PV_H + 24, 28, 0x55595f, 0x34363b, 255);
+    hr_ring(s, 392, 76, PV_W + 24, PV_H + 24, 28, 2, 0x6e7278, 255);
+    if (px && preview.px) hb_blit(s, &preview, 404, 88, 255);
+    else { hr_fill(s, 404, 88, PV_W, PV_H, 18, 0x0d0f13, 255); ht_center(s, HF_XS, 404 + PV_W / 2, 88 + PV_H / 2 - 16, 0x8a919c, 255, 0, "Its picture is on the way"); }
     const char *nm = G->sys == SYS_GBA ? GBA_N[look] : look ? LOOK_N[look] : LOOK_N[lk];
-    ht(s, HF_LABEL, 404, 548, pal.text, 255, 0, nm);
-    if (G->sys == SYS_NDS && !look) ht(s, HF_SMALL, 404 + ht_w(HF_LABEL, nm, 0) + 14, 554, pal.sub, 255, 0, "(as in Settings)");
-    ht_wrap(s, HF_BODY, 404, 594, PV_W, 34, 3, pal.sub, 255, G->sys == SYS_GBA ? GBA_D[look] : LOOK_D[look ? look : 0]);
+    ht(s, HF_BD, 404, 548, tx, 255, 0, nm);
+    ht_wrap(s, HF_XS, 404, 604, PV_W, 40, 3, sub, 255, G->sys == SYS_GBA ? GBA_D[look] : LOOK_D[look ? look : 0]);
 }
 
 /* ---------------------------------------------------------------- the bottom screen */
@@ -190,101 +194,108 @@ static void sink(int f, int *x, int *y, int *w, int *h, float *p) {
 }
 void game_draw_bot(Surf *s, float yoff, int alpha) {
     int Y = (int)yoff; (void)alpha;
-    if (Y > 0) hr_shadow(s, 0, Y, SW, SH, 40, 30, -8, 120);
-    hr_fill(s, 0, Y, SW, SH - Y + 60, Y > 0 ? 40 : 0, pal.bg, 255);
-    if (Y > 0) hr_fill(s, SW / 2 - 40, Y + 10, 80, 7, 4, pal.track, 255);
+    Surf bg = *s; if (Y > 0) surf_clip(&bg, 0, Y, SW, SH - Y);
+    Art *A = G ? art_get(G) : 0;
+    uint32_t tint = A && A->state ? A->vivid : accent;
+    if (pal.dark) dsi_bg_dark(&bg, tint, 0.3f, 0); else dsi_bg_bottom(&bg, tint, 0.3f, 0);
+    if (Y > 0) { rect_blend(s, 0, Y, SW, 6, 0xffffff, 160); rect_blend(s, 0, Y + 6, SW, 3, 0x000000, 30); }
     if (!G) return;
+    uint32_t tx = pal.dark ? 0xdfe3e8 : D_TEXT, sub = pal.dark ? 0x9aa2ad : D_TEXT_SOFT;
     int x, y, w, h; float p;
     char a[96], b[64];
     /* back, the name, the star */
-    sink(F_BACK, &x, &y, &w, &h, &p); y += Y;
-    card(s, x, y, w, h, 26, (int)(5 - 4 * p));
-    icon(s, IC_BACK, x + 38.f, y + h / 2.f, 30, pal.text, 255);
-    ht(s, HF_LABEL, x + 62, y + h / 2 - ht_h(HF_LABEL) / 2, pal.text, 255, 0, "Back");
-    key_cap(s, x + w - 38, y + h / 2, 18, "B", pal.chip, pal.sub);
-    char t[160]; ht_fit(HF_LABEL, G->title, SW - 64 - 210 - 84 - 48, t, sizeof t);
-    ht(s, HF_LABEL, 32 + 210 + 24, Y + 66 - ht_h(HF_LABEL) / 2, pal.text, 255, 0, t);
-    sink(F_FAV, &x, &y, &w, &h, &p); y += Y;
-    card(s, x, y, w, h, 26, (int)(5 - 4 * p));
-    icon(s, G->fav ? IC_STAR : IC_STAR_O, x + w / 2.f, y + h / 2.f, 40 * (1 + 0.15f * p), G->fav ? 0xE9A400 : pal.sub, 255);
-    /* resume (or play) */
-    sink(F_RESUME, &x, &y, &w, &h, &p); y += Y;
-    hr_shadow(s, x, y, w, h, 30, 18, 10 - (int)(p * 6), (int)(120 * (1 - p * 0.6f)));
-    hr_vgrad(s, x, y, w, h, 30, h_mix(accent_ink, 0xffffff, 0.12f), accent_ink, 255);
+    rect_of(F_BACK, &x, &y, &w, &h); p = press_of(300 + F_BACK);
+    dsi_button(s, x, y + Y, w, h, "Back", "B", 0, p, 255);
+    char t[160]; ht_fit(HF_BD, G->title, SW - 64 - 210 - 84 - 48, t, sizeof t);
+    ht(s, HF_BD, 32 + 210 + 24, Y + 66 - ht_h(HF_BD) / 2, tx, 255, 0, t);
+    rect_of(F_FAV, &x, &y, &w, &h); p = press_of(300 + F_FAV);
+    dsi_round(s, x + w / 2.f, Y + y + h / 2.f, 40, p, 255);
+    if (G->fav) dsi_star(s, x + w / 2.f, Y + y + h / 2.f + p * 4, 22, D_STAR, 255);
+    else icon(s, IC_STAR_O, x + w / 2.f, Y + y + h / 2.f + p * 4, 40, 0xa0a0a0, 255);
+    /* resume (or play): the main button, both of the DS's screens in it */
+    rect_of(F_RESUME, &x, &y, &w, &h); y += Y; p = press_of(300 + F_RESUME);
+    dsi_face_main(s, x, y, w, h, 28, p, 255);
+    y += (int)(p * 4);
     const Img *rp = G->sys == SYS_NDS && has_res ? art_dss(res_p) : 0;
-    if (G->sys == SYS_NDS && has_res) dss_screens(s, rp, G, x + 26, y + (h - 172) / 2, 110, 255);
-    else game_cover(s, G, x + 24, y + 24, 132, h - 48, 14, 255);
-    int tx = x + 180;
-    ht(s, HF_TITLE, tx, y + 54, 0xffffff, 255, 0, has_res ? "Resume" : "Play");
+    if (G->sys == SYS_NDS && has_res) dss_screens(s, rp, G, x + 22, y + (h - 172) / 2, 110, 255);
+    else { hr_fill(s, x + 20, y + 20, 140, h - 40, 10, 0xffffff, 255); game_cover(s, G, x + 26, y + 26, 128, h - 52, 4, 255); }
+    int tx0 = x + 178;
+    Accent ac = dsi_accent();
+    ht(s, HF_LG, tx0 + 3, y + 40 + 3, ac.dark, 160, 0, has_res ? "Resume" : "Play");
+    ht(s, HF_LG, tx0, y + 40, 0xffffff, 255, 0, has_res ? "Resume" : "Play");
     if (has_res) { ago(res_t, b, sizeof b); snprintf(a, sizeof a, "Where you left off, %s", b); }
     else snprintf(a, sizeof a, G->secs > 0 ? "From your save" : "For the first time");
-    ht_wrap(s, HF_BODY, tx, y + 54 + ht_h(HF_TITLE) + 6, x + w - tx - 20, 32, 2, 0xffffff, 225, a);
-    key_cap(s, x + w - 40, y + 40, 20, "A", h_mix(accent_ink, 0xffffff, 0.26f), 0xffffff);
+    ht_wrap(s, HF_XS, tx0, y + 40 + ht_h(HF_LG) + 8, x + w - tx0 - 20, 38, 2, 0xffffff, 230, a);
+    dsi_glyph(s, x + w - 64, y + 20, "A", ac.dark, 255);
     /* from the start */
-    sink(F_START, &x, &y, &w, &h, &p); y += Y;
-    card(s, x, y, w, h, 30, (int)(6 - 5 * p));
-    icon(s, IC_RESTART, x + 50.f, y + 52.f, 40, accent_text(), 255);
-    ht(s, HF_LABEL, x + 26, y + 92, pal.text, 255, 0, "From the start");
-    ht_wrap(s, HF_SMALL, x + 26, y + 92 + ht_h(HF_LABEL) + 4, w - 46, 28, 2, pal.sub, 255,
-            has_res ? "The title screen. Your save is kept as it is." : "The title screen.");
-    /* save states */
+    rect_of(F_START, &x, &y, &w, &h); y += Y; p = press_of(300 + F_START);
+    dsi_face(s, x, y, w, h, 28, 0, p, 255);
+    y += (int)(p * 4);
+    icon(s, IC_RESTART, x + 50.f, y + 46.f, 40, ac.base, 255);
+    ht(s, HF_BD, x + 26, y + 76, D_TEXT, 255, 0, "From the start");
+    ht_wrap(s, HF_XS, x + 26, y + 76 + ht_h(HF_BD), w - 46, 34, 2, D_TEXT_SOFT, 255,
+            has_res ? "The title screen. Your save stays." : "The title screen.");
+    /* save states: photo frames with both screens in them */
     if (G->sys == SYS_NDS) {
-        ht(s, HF_CAPS, 40, Y + 350, pal.sub, 255, 3, "SAVE STATES");
+        dsi_section(s, 40, Y + 342, SW - 80, "SAVE STATES", 255);
         for (int i = 0; i < NSLOT; i++) {
-            sink(F_SLOT0 + i, &x, &y, &w, &h, &p); y += Y;
-            card(s, x, y, w, h, 24, slot_on[i] ? (int)(5 - 4 * p) : 0);
+            rect_of(F_SLOT0 + i, &x, &y, &w, &h); y += Y; p = press_of(300 + F_SLOT0 + i);
+            dsi_face(s, x, y, w, h, 18, 0, slot_on[i] ? p : 0, slot_on[i] ? 255 : 170);
+            y += (int)(p * 4);
             snprintf(a, sizeof a, "Slot %d", i + 1);
+            int pw = (w - 40) / 2, ph = pw * 3 / 4;
+            hr_fill(s, x + 14, y + 14, w - 28, ph + 12, 8, slot_on[i] ? 0x23262c : 0xdcdcdc, 255);
             if (slot_on[i]) {
                 const Img *pic = art_dss(slot_p[i]);
-                /* the two screens side by side (as they were, small) */
-                int pw = (w - 36) / 2, ph = pw * 3 / 4;
-                hr_fill(s, x + 12, y + 12, w - 24, ph + 12, 12, 0x23262c, 255);
                 if (pic) {
                     Img up = { 256, 192, pic->px }, lo = { 256, 192, pic->px + 256 * 192 };
-                    blit_scaled(s, &up, x + 18.f, y + 18.f, (float)pw, (float)ph, 255, 1);
-                    blit_scaled(s, &lo, x + 18.f + pw, y + 18.f, (float)pw, (float)ph, 255, 1);
+                    blit_scaled(s, &up, x + 20.f, y + 20.f, (float)pw, (float)ph, 255, 1);
+                    blit_scaled(s, &lo, x + 20.f + pw, y + 20.f, (float)pw, (float)ph, 255, 1);
                 }
-                ht(s, HF_BODYB, x + 16, y + h - 54, pal.text, 255, 0, a);
+                ht(s, HF_XS, x + 18, y + h - 74, D_TEXT, 255, 0, a);
                 ago(slot_t[i], b, sizeof b);
-                char bb[64]; ht_fit(HF_SMALL, b, w - 32, bb, sizeof bb);
-                ht(s, HF_SMALL, x + 16, y + h - 54 + ht_h(HF_BODYB) - 2, pal.sub, 255, 0, bb);
+                char bb[64]; ht_fit(HF_XS, b, w - 32, bb, sizeof bb);
+                ht(s, HF_XS, x + 18, y + h - 40, D_TEXT_SOFT, 255, 0, bb);
             } else {
-                hr_ring(s, x + 12, y + 12, w - 24, h - 70, 12, 3, pal.line, 255);
-                ht_center(s, HF_SMALL, x + w / 2, y + 12 + (h - 70) / 2 - ht_h(HF_SMALL) / 2, pal.faint, 255, 0, "Empty");
-                ht(s, HF_BODYB, x + 16, y + h - 48, pal.faint, 255, 0, a);
+                ht_center(s, HF_XS, x + w / 2, y + 14 + (ph + 12) / 2 - ht_h(HF_XS) / 2, 0xa0a0a0, 255, 0, "Empty");
+                ht(s, HF_XS, x + 18, y + h - 56, 0xa0a0a0, 255, 0, a);
             }
         }
     } else {
-        ht(s, HF_CAPS, 40, Y + 350, pal.sub, 255, 3, "THIS GAME");
-        card(s, 32, Y + S_Y, SW - 64, S_H, 24, 0);
+        dsi_section(s, 40, Y + 342, SW - 80, "THIS GAME", 255);
+        dsi_face(s, 32, Y + S_Y, SW - 64, S_H, 18, 0, 0, 255);
         played_text(G, b, sizeof b);
-        snprintf(a, sizeof a, G->plays ? "Played %d times, %s in all" : "Not played yet", G->plays, b);
-        ht(s, HF_LABEL, 60, Y + S_Y + 36, pal.text, 255, 0, a);
-        ht_wrap(s, HF_SMALL, 60, Y + S_Y + 84, SW - 120, 28, 2, pal.sub, 255,
-                "Save states: in RetroArch's own menu while you play. With Resume on, leaving keeps your place.");
+        if (!G->plays) snprintf(a, sizeof a, "Not played yet");
+        else if (G->plays == 1) snprintf(a, sizeof a, "Played once, %s in all", b);
+        else snprintf(a, sizeof a, "Played %d times, %s in all", G->plays, b);
+        ht(s, HF_BD, 60, Y + S_Y + 30, D_TEXT, 255, 0, a);
+        ht_wrap(s, HF_XS, 60, Y + S_Y + 88, SW - 120, 38, 2, D_TEXT_SOFT, 255,
+                "Save states: RetroArch's own menu, while you play. With Resume on, leaving keeps your place.");
     }
-    /* the screen look */
-    ht(s, HF_CAPS, 40, Y + 590, pal.sub, 255, 3, G->sys == SYS_NDS ? "SCREEN LOOK  ·  THIS GAME  ·  SEE IT ABOVE" : "SCREEN LOOK  ·  ALL GBA GAMES  ·  SEE IT ABOVE");
+    /* the screen look: < its name > */
+    dsi_section(s, 40, Y + 584, SW - 80, G->sys == SYS_NDS ? "SCREEN LOOK  \xc2\xb7  THIS GAME" : "SCREEN LOOK  \xc2\xb7  ALL GBA GAMES", 255);
     rect_of(F_LOOK, &x, &y, &w, &h); y += Y;
-    hr_fill(s, x, y, w, h, 52, pal.track, 255);
+    dsi_face(s, x, y, w, h, 24, 0, 0, 255);
     for (int i = 0; i < 2; i++) {
-        float q = press_of(400 + i); int bx = i ? x + w - 96 : x + 8, d = (int)(q * 4);
-        hr_fill(s, bx + d, y + 8 + d, 88 - 2 * d, 88 - 2 * d, 44, pal.card, 255);
-        icon(s, i ? IC_RIGHT : IC_LEFT, bx + 44.f, y + 52.f, 34, pal.sub, 255);
+        float q = press_of(400 + i); int bx = i ? x + w - 100 : x + 12;
+        dsi_face_main(s, bx, y + 12, 88, h - 24, 20, q, 255);
+        float cx = bx + 44.f, cy = y + h / 2.f + q * 4, tri[6];
+        if (i) { tri[0] = cx - 10; tri[1] = cy - 16; tri[2] = cx - 10; tri[3] = cy + 16; tri[4] = cx + 14; tri[5] = cy; }
+        else { tri[0] = cx + 10; tri[1] = cy - 16; tri[2] = cx + 10; tri[3] = cy + 16; tri[4] = cx - 14; tri[5] = cy; }
+        hi_poly(s, tri, 3, 0xffffff, 255);
     }
     int n = nlooks();
     {
-        /* the name slides with the choice */
         float off = (look_k.x - look) * -220;
         Surf c = *s; surf_clip(&c, x + 110, y, w - 220, h);
         const char *nm = G->sys == SYS_GBA ? GBA_N[look] : LOOK_N[look];
-        ht_center(&c, HF_LABEL, x + w / 2 + (int)off, y + 30 - ht_h(HF_LABEL) / 2 + 6, pal.text, 255, 0, nm);
+        ht_center(&c, HF_BD, x + w / 2 + (int)off, y + 36 - ht_h(HF_BD) / 2, D_TEXT, 255, 0, nm);
         for (int i = 0; i < n; i++) {
-            float cx = x + w / 2.f + (i - (n - 1) / 2.f) * 22;
-            hi_circle(s, cx, y + 80.f, i == look ? 6.f : 4.5f, 0, i == look ? accent : pal.faint, 255);
+            float cx = x + w / 2.f + (i - (n - 1) / 2.f) * 24;
+            hi_circle(s, cx, y + 80.f, i == look ? 7.f : 5.f, 0, i == look ? ac.base : 0xc0c0c0, 255);
         }
     }
-    (void)alpha;
+    (void)sub; (void)alpha;
 }
 
 /* ---------------------------------------------------------------- moving */
