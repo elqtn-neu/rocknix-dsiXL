@@ -56,10 +56,10 @@ swipe a game's page down to close it.
 
 ## Install
 
-1. Download `dsixl-1.0.0.zip` and unzip it onto the root of the BananaOS card. It puts `Install DSi Menu` (and
-   `Uninstall DSi Menu`) in `roms/ports`.
-2. On the handheld: BananaOS's **Ports** shelf, **Install DSi Menu**. BananaOS's menu restarts with **DSi Menu**
-   first on its shelf.
+1. Download `dsixl-1.0.0.zip` and unzip it onto the root of the BananaOS card. It puts `Install DSi Menu`,
+   `Uninstall DSi Menu` and the folder `dsixl-files` in `roms/ports` (all three are needed).
+2. On the handheld: BananaOS's **Ports** shelf, **Install DSi Menu**. The menu opens; from then on it's **DSi Menu**,
+   first on BananaOS's shelf. If nothing happens, `dsixl-install.log` on the card says why.
 3. Open it. **START > Exit to BananaOS** goes back.
 
 Everything goes on the card: the menu in `/data/dsixl`, its two screen looks in `/data/banana/shaders`, and its entry

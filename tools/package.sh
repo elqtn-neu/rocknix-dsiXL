@@ -1,13 +1,13 @@
 #!/bin/sh
 # package.sh: dist/dsixl-<version>.zip, for BananaOS: unpacked onto the card's root it puts roms/ports/Install DSi
-# Menu.sh (and Uninstall) in BananaOS's Ports, and everything they install in roms/ports/.dsixl-install.
+# Menu.sh (and Uninstall) in BananaOS's Ports, and everything they install in roms/ports/dsixl-files (a plain folder: one with a dot in front is hidden, and got left behind in copies).
 #   sh build.sh aarch64 && sh tools/package.sh
 set -e
 cd "$(dirname "$0")/.."
 V=$(cat VERSION)
 BIN=build/dsixl-aarch64; [ -f $BIN ] || BIN=bin/dsixl-aarch64
 T=$(mktemp -d)
-P=$T/roms/ports; I=$P/.dsixl-install
+P=$T/roms/ports; I=$P/dsixl-files
 mkdir -p $I/bin $I/tools $I/docs
 cp "device/ports/Install DSi Menu.sh" "device/ports/Uninstall DSi Menu.sh" $P/
 cp $BIN $I/bin/dsixl-aarch64

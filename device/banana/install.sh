@@ -1,6 +1,6 @@
 #!/bin/sh
 # install.sh [--uninstall] [--no-restart]: the DSi Menu on BananaOS, from the release folder this is in
-# (roms/ports/.dsixl-install, which the zip puts on the card). Run by Ports > Install DSi Menu (or by the menu's
+# (roms/ports/dsixl-files, which the zip puts on the card). Run by Ports > Install DSi Menu (or by the menu's
 # Update). BananaOS's system is read-only, so everything goes on the card:
 #   /data/dsixl              the menu, its scripts and its data (art in media/, your sounds in sounds/)
 #   /data/banana/shaders     dsi-lcd.frag and dsi-lcd-color.frag (Settings > Nintendo DS > Shader lists them too)
