@@ -64,28 +64,16 @@ void rectf(Surf *s, int x, int y, int w, int h, uint32_t c) {
     for (int yy = y0; yy < y1; yy++) { uint32_t *r = s->px + (size_t)yy * s->pitch; for (int xx = x0; xx < x1; xx++) r[xx] = c & 0xffffff; }
 }
 void rect_blend(Surf *s, int x, int y, int w, int h, uint32_t c, int a) {
-    if (a <= 0) return;
     if (a >= 255) { rectf(s, x, y, w, h, c); return; }
     int x0 = MAX(x, s->cx0), y0 = MAX(y, s->cy0), x1 = MIN(x + w, s->cx1), y1 = MIN(y + h, s->cy1);
-    /* the colour's share worked out once: per pixel two multiplies and an add */
-    uint32_t k = (uint32_t)a + ((uint32_t)a >> 7), ik = 256 - k;
-    uint32_t crb = (c & 0xff00ff) * k, cg = (c & 0x00ff00) * k;
-    for (int yy = y0; yy < y1; yy++) {
-        uint32_t *p = s->px + (size_t)yy * s->pitch;
-        for (int xx = x0; xx < x1; xx++) {
-            uint32_t d = p[xx];
-            p[xx] = (((crb + (d & 0xff00ff) * ik) >> 8) & 0xff00ff) | (((cg + (d & 0x00ff00) * ik) >> 8) & 0x00ff00);
-        }
-    }
+    for (int yy = y0; yy < y1; yy++) for (int xx = x0; xx < x1; xx++) pblend(s, xx, yy, c, a);
 }
 void rect_vgrad(Surf *s, int x, int y, int w, int h, uint32_t top, uint32_t bot, int a) {
-    int x0 = MAX(x, s->cx0), x1 = MIN(x + w, s->cx1);
     for (int yy = 0; yy < h; yy++) {
-        int py = y + yy;
-        if (py < s->cy0 || py >= s->cy1) continue;
         uint32_t c = col_mix(top, bot, h > 1 ? yy * 256 / (h - 1) : 0);
-        if (a >= 255) { uint32_t v = c & 0xffffff, *p = s->px + (size_t)py * s->pitch; for (int xx = x0; xx < x1; xx++) p[xx] = v; }
-        else rect_blend(s, x0, py, x1 - x0, 1, c, a);
+        int x0 = MAX(x, s->cx0), x1 = MIN(x + w, s->cx1), py = y + yy;
+        if (py < s->cy0 || py >= s->cy1) continue;
+        for (int xx = x0; xx < x1; xx++) pblend(s, xx, py, c, a);
     }
 }
 void hline(Surf *s, int x0, int x1, int y, uint32_t c, int a) { for (int x = x0; x <= x1; x++) pblend(s, x, y, c, a); }

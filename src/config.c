@@ -89,7 +89,7 @@ static void read_ini(const char *path, void (*kv)(const char *, const char *)) {
 #define STR(k, field) if (!strcmp(key, k)) { snprintf(cfg.field, sizeof cfg.field, "%s", v); return; }
 #define INT(k, field) if (!strcmp(key, k)) { cfg.field = atoi(v); return; }
 static void cfg_kv(const char *key, const char *v) {
-    STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music) INT("vibration", rumble) INT("dsi_screen", lcd) INT("theme", theme)
+    STR("user", user) INT("color", color) INT("clock24", clock24) INT("sound_effects", sfx) INT("music", music) INT("vibration", rumble) INT("dsi_screen", lcd)
     INT("boot_splash", boot_splash) INT("boot_wait", boot_wait) INT("swap_ab", swap_ab)
     INT("dim_after", dim_after) INT("screen_off_after", screen_off_after)
     if (!strcmp(key, "birthday")) { if (sscanf(v, "%d-%d", &cfg.bday_month, &cfg.bday_day) != 2) cfg.bday_month = cfg.bday_day = 0; return; }
@@ -143,8 +143,6 @@ void config_save(void) {
         "# the screens: 1 like a DSi's (each pixel with a fine gap and colour stripes), 2 that with the DS screen's own\n"
         "# (duller) colours, 0 plain square pixels\n"
         "dsi_screen = %d\n"
-        "# the look: 0 by the clock (night from 19:00 to 7:00), 1 light, 2 night\n"
-        "theme = %d\n"
         "# the health and safety screen at start (1), and how it ends: 0 waits for a touch, n continues after n seconds\n"
         "boot_splash = %d\n"
         "boot_wait = %d\n"
@@ -161,7 +159,7 @@ void config_save(void) {
         "media = %s\n"
         "# your own sound pack: see the README (boot.wav, cursor.wav, select.wav, ..., music.mp3)\n"
         "sounds = %s\n",
-        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.rumble, cfg.lcd, cfg.theme, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, cfg.dim_after, cfg.screen_off_after, bday,
+        cfg.user, cfg.color, cfg.clock24, cfg.sfx, cfg.music, cfg.rumble, cfg.lcd, cfg.boot_splash, cfg.boot_wait, cfg.swap_ab, cfg.dim_after, cfg.screen_off_after, bday,
         cfg.dir_nds, cfg.dir_gba, cfg.media, cfg.sounds);
     write_atomic(p, buf);
 }

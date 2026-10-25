@@ -1,6 +1,6 @@
 // r3d.h: a tiny software 3D renderer for the cartridges: convex polygons, perspective-correct texturing, flat
 // lighting with a specular glint, drawn at 2x2 supersampling into a scratch buffer and resolved onto the screen
-// (smooth edges).
+// (the DS's own edge antialiasing look, at the DS's resolution).
 #pragma once
 #include "gfx.h"
 
@@ -33,8 +33,6 @@ typedef struct {
     int nearest;                /* texels as they are (the DS's look) rather than smoothed between */
 } Mat;
 
-/* samples a pixel each way: 2 (smooth edges, four times the work) or 1 (things in motion) */
-void r3d_quality(int ss);
 /* the camera: screen centre of the object, focal length in pixels; vertices are given in camera space (z ahead) */
 void r3d_camera(float cx, float cy, float f);
 /* the screen box the object can cover (1x pixels) */

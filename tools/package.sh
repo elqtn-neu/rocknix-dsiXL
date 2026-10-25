@@ -11,7 +11,7 @@ P=$T/roms/ports; I=$P/dsixl-files
 mkdir -p $I/bin $I/tools $I/docs
 cp "device/ports/Install DSi Menu.sh" "device/ports/Uninstall DSi Menu.sh" $P/
 cp $BIN $I/bin/dsixl-aarch64
-mkdir -p $I/device && cp -r assets $I/ && cp -r device/banana device/shaders $I/device/
+cp -r assets device $I/ && rm -rf $I/device/ports
 cp tools/dsixl-scrape.py $I/tools/ && cp docs/sounds.md $I/docs/ && cp VERSION README.md THIRD_PARTY.md $I/
 mkdir -p dist && rm -f dist/dsixl-$V.zip
 (cd $T && python3 -c "

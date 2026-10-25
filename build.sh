@@ -8,10 +8,10 @@
 set -e
 cd "$(dirname "$0")"
 V=$(cat VERSION 2>/dev/null || echo dev)
-SRCS="src/main.c src/ui.c src/ui_home.c src/ui_game.c src/ui_set.c src/library.c src/img.c
-      src/gfx.c src/audio.c src/config.c src/rumble.c src/gamecfg.c src/power.c src/job.c src/synth.c
+SRCS="src/main.c src/ui.c src/widgets.c src/cart.c src/r3d.c src/library.c src/img.c src/font.c src/font_data.c
+      src/gfx.c src/audio.c src/config.c src/rumble.c src/gamecfg.c src/power.c src/job.c src/panels.c src/synth.c
       src/plat/plat.c src/plat/plat_kms.c src/plat/plat_sdl.c src/plat/plat_headless.c src/plat/input_evdev.c
-      src/plat/audio_alsa.c src/plat/png.c src/plat/lcd.c src/hfont.c src/hfont_data.c src/hgfx.c src/art.c src/sleepkey.c src/cart3d.c src/r3d.c src/dsi.c"
+      src/plat/audio_alsa.c src/plat/png.c src/plat/lcd.c"
 WARN="-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-format-truncation -Wno-sign-compare"
 INC="-Isrc -Isrc/plat -I/usr/include/libdrm -I/usr/include/SDL2"
 mkdir -p build
@@ -26,7 +26,7 @@ aarch64)
         [ -n "$R" ] && echo "#include \"$R\"" > build/sdlshim/SDL2/_real_SDL_config.h
         INC="$INC -Ibuild/sdlshim -DSDL_DISABLE_IMMINTRIN_H -DSDL_DISABLE_MMINTRIN_H -DSDL_DISABLE_XMMINTRIN_H -DSDL_DISABLE_EMMINTRIN_H -DSDL_DISABLE_PMMINTRIN_H"
     fi
-    $CC -O3 -mcpu=cortex-a55 $WARN -DDSIXL_VERSION="\"$V\"" $INC -o build/dsixl-aarch64 $SRCS -lm -lpthread -ldl
+    $CC -O2 -mcpu=cortex-a55 $WARN -DDSIXL_VERSION="\"$V\"" $INC -o build/dsixl-aarch64 $SRCS -lm -lpthread -ldl
     ${STRIP:-aarch64-linux-gnu-strip} --strip-unneeded build/dsixl-aarch64
     ls -l build/dsixl-aarch64
     ;;

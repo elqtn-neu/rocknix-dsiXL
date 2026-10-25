@@ -35,12 +35,7 @@ typedef struct {
     const char *backend;
 } PlatInfo;
 
-/* 1 (before plat_init): draw at the panels' own resolution (1024x768 on the RG DS Plus), not the DS's 256x192 */
-extern int plat_native;
 int plat_init(const char *backend, PlatInfo *info);
-/* the rows of a screen (0 top, 1 bottom) this frame changed, [y0, y1): once a frame uses it, a screen with no damage
- * is taken as unchanged (nothing compared, nothing copied) and only the damaged rows go to the panel */
-void plat_damage(int screen, int y0, int y1);
 void plat_poll(Input *in);
 void plat_present(Surf *top, Surf *bot);      /* shows both screens; paced to the display's refresh */
 /* what the display did with the frames since the last call (DSIXL_PROFILE's line): "" where a backend doesn't count */
@@ -65,11 +60,6 @@ extern int plat_lcd;
 /* lcd.c: one row of w logical pixels scaled k times, as the k-1 rows of stripes (row) and the gap row below them
  * (gap); 0 (nothing written) when the look is off or k is under 3 */
 int lcd_rows(const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap);
-int lcd_rows_mode(int mode, const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap);   /* (any mode: previews) */
-uint32_t lcd_nds_color(uint32_t c);
-/* the panels at their own resolution: two rows of a frame as the LCD shows them (blocks of 2x2: see lcd.c); 0 when
- * the look is off */
-int lcd2_pair(int mode, const uint32_t *r0, const uint32_t *r1, int w, uint32_t *o0, uint32_t *o1);                 /* the DS screen's colour profile of one colour */
 const char *plat_data_dir(void);              /* where scores and settings live (created) */
 void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

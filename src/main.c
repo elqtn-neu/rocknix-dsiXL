@@ -1,5 +1,5 @@
-// main.c: DSi Menu: a Nintendo DS and Game Boy Advance menu for the Anbernic RG DS Plus on BananaOS, the
-// successor of the Nintendo DSi's, on both of its panels at their own 1024x768.
+// main.c: DSi Menu for ROCKNIXDS: a Nintendo DS and Game Boy Advance menu for the Anbernic RG DS Plus in the
+// style of the Nintendo DSi's, on both panels at the DS's own resolution.
 //
 //   dsixl [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <rom file name>]
 //   dsixl --setup-emulators   the recommended emulator settings into ROCKNIX's system.cfg, where none are set
@@ -19,29 +19,8 @@
 #include <signal.h>
 #include <strings.h>
 #include <unistd.h>
-#include <time.h>
 
 static volatile sig_atomic_t term;
-/* DSIXL_PROFILE: what each frame of the menu costs the CPU (its drawing, its present), logged every few seconds and,
- * in a headless run, summed up at the end */
-static double cpu_now(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return (double)t.tv_sec + t.tv_nsec * 1e-9; }
-static int prof_on;
-static double prof_ms[20000]; static int prof_n, prof_idle, prof_top, prof_bot;
-static void prof_add(double ms, int drew) { if (!drew) { prof_idle++; return; } prof_top += drew & 1; prof_bot += drew >> 1 & 1; if (prof_n < 20000) prof_ms[prof_n++] = ms; }
-static int cmpd(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
-static void prof_report(const char *why) {
-    if (!prof_n) { plat_log("profile %s: %d frames, none drawn", why, prof_idle); if (getenv("DSIXL_VERBOSE")) {} return; }
-    qsort(prof_ms, (size_t)prof_n, sizeof(double), cmpd);
-    double sum = 0; for (int i = 0; i < prof_n; i++) sum += prof_ms[i];
-    char b[200];
-    snprintf(b, sizeof b, "profile %s: %d drawn (%d idle; top %d, bottom %d): mean %.2f ms, p50 %.2f, p95 %.2f, max %.2f", why, prof_n, prof_idle, prof_top, prof_bot,
-             sum / prof_n, prof_ms[prof_n / 2], prof_ms[prof_n * 95 / 100], prof_ms[prof_n - 1]);
-    plat_log("%s", b);
-    if (prof_on > 1) fprintf(stderr, "%s\n", b);
-    prof_n = prof_idle = prof_top = prof_bot = 0;
-}
-/* the time, counting the time asleep too (the monotonic clock stops while the handheld sleeps) */
-static double boottime(void) { struct timespec t; clock_gettime(CLOCK_BOOTTIME, &t); return (double)t.tv_sec + t.tv_nsec * 1e-9; }
 static void on_term(int s) { (void)s; term = 1; }
 
 /* the scripted input of a headless run: "1.0:A,2.5:RIGHT,3:TOUCH@128x100" (each held 0.1 s); POWER (the power
@@ -101,12 +80,10 @@ int main(int argc, char **argv) {
         else fprintf(stderr, "dsixl: ignoring %s (usage: %s [--backend kms|sdl|headless] [--no-boot] [--return nds|gba <file>])\n", argv[i], argv[0]);
     }
     signal(SIGTERM, on_term); signal(SIGINT, on_term);
-    prof_on = getenv("DSIXL_PROFILE") ? atoi(getenv("DSIXL_PROFILE")) + 0 : 0; if (getenv("DSIXL_PROFILE") && !prof_on) prof_on = 1;
     config_load();
     library_scan();
     plat_log("dsixl: %d NDS, %d GBA games; home %s", lib[SYS_NDS].n, lib[SYS_GBA].n, cfg.home);
     PlatInfo info;
-    plat_native = 1;
     if (cfg.banana) setenv("DSIXL_NO_GRAB", "1", 1);   /* (BananaOS's bananad has the power button and the lid) */
     if (plat_init(backend, &info)) { plat_log("no display"); fprintf(stderr, "dsixl: no display\n"); return 3; }
     plat_log("display: %s, %dx scale", info.backend, info.scale);
@@ -116,9 +93,8 @@ int main(int argc, char **argv) {
     audio_init();
     ui_init(&st);
     Surf top, bot;
-    surf_alloc(&top, info.top_w, info.top_h); surf_alloc(&bot, info.bot_w, info.bot_h);
-    if (info.top_w != 1024 || info.top_h != 768) plat_log("display: %dx%d (the menu is drawn for 1024x768)", info.top_w, info.top_h);
-    double last = plat_now(), vt = 0, last_bt = boottime();
+    surf_alloc(&top, 256, 192); surf_alloc(&bot, 256, 192);
+    double last = plat_now(), vt = 0;
     int frame = 0, code = -1, applied = PW_FULL;
     while (code < 0) {
         Input in;
@@ -129,10 +105,9 @@ int main(int argc, char **argv) {
             if (seconds > 0 && vt >= seconds) break;
         } else {
             plat_poll(&in);
-            double now = plat_now(), bt = boottime(); dt = now - last; last = now;
-            /* seconds gone that the menu didn't see: the handheld slept (bananad stops the menu and suspends) */
-            if ((bt - last_bt > 2.5 || dt > 3) && applied != PW_OFF) ui_resumed();
-            last_bt = bt;
+            double now = plat_now(); dt = now - last; last = now;
+            /* frozen for seconds with the screens on: the handheld slept (ROCKNIX's lid suspend stops the menu) */
+            if (dt > 3 && applied != PW_OFF) ui_resumed();
             if (dt > 0.1) dt = 0.1;
             /* power: the backlights follow the menu's wish; with the screens off nothing is drawn, a button wakes them */
             int pw = ui_power();
@@ -145,38 +120,18 @@ int main(int argc, char **argv) {
                 if (term) break;
                 ui_idle_input(&in);
                 usleep(50000);
-                last = plat_now(); last_bt = boottime();
+                last = plat_now();
                 continue;
             }
         }
         if (term) in.quit = 1;
-        double c0 = prof_on ? cpu_now() : 0;
         code = ui_frame(&in, dt, &top, &bot);
-        double c1 = prof_on ? cpu_now() : 0;
-        if (headless && record) {
-            /* DSIXL_SNAP="1.5,3": only the frames at those times (seconds), named by them; else every frame */
-            const char *at = getenv("DSIXL_SNAP");
-            char p[600];
-            if (!at) { snprintf(p, sizeof p, "%s/%05d.png", record, frame); headless_snapshot(p); }
-            else for (const char *q = at; q && *q; q = strchr(q, ',') ? strchr(q, ',') + 1 : 0) {
-                double ts = atof(q);
-                if (ts <= vt && ts > vt - dt) { snprintf(p, sizeof p, "%s/t%06.2f.png", record, ts); headless_snapshot(p); }
-            }
-        }
+        if (headless && record) { char p[600]; snprintf(p, sizeof p, "%s/%05d.png", record, frame); headless_snapshot(p); }
         plat_present(&top, &bot);
-        if (prof_on) {
-            double ms = (cpu_now() - c0) * 1000;
-            {   static double from = -1; if (from < 0) from = getenv("DSIXL_PROFILE_FROM") ? atof(getenv("DSIXL_PROFILE_FROM")) : 0;
-                if ((headless ? vt : plat_now()) >= from) prof_add(ms, ui_drew()); }
-            if (prof_on > 2 && ms > 6) fprintf(stderr, "slow frame at %.2f s: %.1f ms\n", headless ? vt : plat_now(), ms);
-            (void)c1;
-            static double next; if (!headless && plat_now() > next) { if (next) prof_report("5 s"); next = plat_now() + 5; }
-        }
         if (!headless && ui_power() >= PW_CALM) usleep(15000);     /* calm: every other refresh is plenty */
         if (!headless && ui_asleep()) usleep(40000);               /* asleep: only waiting to wake */
         frame++;
     }
-    if (prof_on) prof_report("run");
     if (!headless) power_restore();
     plat_shutdown();
     plat_log("dsixl: exit %d", code < 0 ? 0 : code);

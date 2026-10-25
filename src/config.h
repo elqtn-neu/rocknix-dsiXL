@@ -10,7 +10,6 @@ typedef struct {
     int lcd;                        /* the screens: 0 plain pixels, 1 a DSi's LCD (pixel gaps, colour stripes), 2 that with
                                      * the DS screen's own (duller) colours */
     int banana;                     /* running on BananaOS (not ROCKNIX): its paths, launchers and settings files */
-    int theme;                      /* 0 by the clock (night 19:00-7:00), 1 light, 2 night */
     int boot_splash;                /* 1: the health and safety screen at start; 0: straight to the menu */
     int boot_wait;                  /* 0: it waits for a touch or a button, as the DSi; n: continues after n s */
     int swap_ab;                    /* Nintendo layout (A right) is the default */
