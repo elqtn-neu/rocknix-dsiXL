@@ -6,9 +6,10 @@
 
 typedef struct {
     int state;                      /* 0 asked for, 1 there, -1 none (a made-up cover is drawn) */
-    Img cover;                      /* fitted inside 400 x 440 */
+    Img cover;                      /* fitted inside 400 x 440: the box art (else the label, else a cartridge scan) */
+    Img face; int face_kind;        /* for the cartridge's label: a scan of the whole cartridge (1) or of its label
+                                     * (2), fitted inside 600 x 600; 0 none (the box art is cropped to a label) */
     uint32_t vivid, deep;           /* its colours (made-up ones from the title when there's no picture) */
-    Img sprite;                     /* ui.c: the cartridge drawn with it (made once, on the main thread) */
     Img hero, hero2;                /* ui.c: the cover at the two sizes drawn last (the home's, the game page's) */
     unsigned use;
 } Art;

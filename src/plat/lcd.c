@@ -83,3 +83,32 @@ int lcd_rows_mode(int mode, const uint32_t *src, int w, int k, uint32_t *row, ui
 }
 
 uint32_t lcd_nds_color(uint32_t c) { return nds_color(c & 0xffffff); }
+
+/* ---- the panels at their own resolution: a DS LCD with twice the DS's pixels. Each 2x2 block of the panel is one of
+ * its pixels: the four averaged (so every edge drawn finer than that is smoothed), its left column the red-led
+ * stripe, its right the green-blue one and the gap beside it, its lower row the gap between rows. The look of the
+ * DSi's screen, at twice its sharpness. ---- */
+#define G2_ROW 220      /* x/256: the gap row */
+#define G2_COL 241      /*        the gap column */
+#define G2_STR 252      /*        a stripe's other colours */
+int lcd2_pair(int mode, const uint32_t *r0, const uint32_t *r1, int w, uint32_t *o0, uint32_t *o1) {
+    if (!mode) return 0;
+    uint32_t last = 0xffffffffu, a = 0, b = 0, c2 = 0, d = 0;
+    for (int x = 0; x + 1 < w; x += 2) {
+        uint32_t p0 = r0[x], p1 = r0[x + 1], p2 = r1[x], p3 = r1[x + 1];
+        uint32_t rb = ((p0 & 0xff00ff) + (p1 & 0xff00ff) + (p2 & 0xff00ff) + (p3 & 0xff00ff)) >> 2 & 0xff00ff;
+        uint32_t g = ((p0 & 0x00ff00) + (p1 & 0x00ff00) + (p2 & 0x00ff00) + (p3 & 0x00ff00)) >> 2 & 0x00ff00;
+        uint32_t c = rb | g;
+        if (c != last) {
+            last = c;
+            uint32_t k = mode == 2 ? nds_color(c) : c;
+            /* left: red kept; right: green kept, dimmer (the gap column) */
+            uint32_t s = scale(k, G2_STR);
+            a = (k & 0xff0000) | (s & 0x00ffff);
+            b = scale((k & 0x00ff00) | (s & 0xff00ff), G2_COL);
+            c2 = scale(a, G2_ROW); d = scale(b, G2_ROW);
+        }
+        o0[x] = a; o0[x + 1] = b; o1[x] = c2; o1[x + 1] = d;
+    }
+    return 1;
+}

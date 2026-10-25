@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """gen_hdfont.py: bakes the menu's fonts into src/hfont_data.c.
 
-M PLUS Rounded 1c (SIL OFL 1.1, tools/fonts), drawn at the RG DS Plus's own pixels (1024x768 a screen): each size the
+M PLUS 1p (SIL OFL 1.1, tools/fonts: the DSi's own lettering is a plain rounded-cornered sans, closer to it than a
+rounded face), drawn at the RG DS Plus's own pixels (1024x768 a screen): each size the
 menu uses, rasterized once here with 16 levels of coverage (4 bits a pixel), so the handheld needs no font engine.
 
     python3 tools/gen_hdfont.py        (needs Pillow; rerun after changing FONTS or CHARS)
@@ -29,6 +30,11 @@ FONTS = [
     ('HF_HERO',   'ExtraBold', 54, ASCII),   # the top screen's title
     ('HF_HUGE',   'ExtraBold', 80, ASCII),   # the start-up's and the sleep's words
     ('HF_CLOCK',  'ExtraBold', 150, DIGITS), # the big clock
+    ('HF_MD',     'Medium',    40, ASCII),   # the DSi's body text (its 12 px, x4 less a touch: the XL's panels)
+    ('HF_BD',     'Bold',      40, ASCII),   # its titles, buttons, tabs
+    ('HF_LG',     'ExtraBold', 60, ASCII),   # the emblem ("Nintendo DS"), big labels
+    ('HF_LOGO',   'ExtraBold', 84, ASCII),   # a game's name as a logo on the top screen
+    ('HF_XS',     'Bold',      32, ASCII),   # the status bar, small print
 ]
 
 
@@ -37,7 +43,7 @@ def quant(v):
 
 
 def bake(weight, size, chars):
-    font = ImageFont.truetype(os.path.join(HERE, 'fonts', 'MPLUSRounded1c-%s.ttf' % weight), size)
+    font = ImageFont.truetype(os.path.join(HERE, 'fonts', 'MPLUS1p-%s.ttf' % weight), size)
     ascent, descent = font.getmetrics()
     glyphs, atlas = [], bytearray()
     for cp in chars:

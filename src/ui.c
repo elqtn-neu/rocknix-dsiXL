@@ -11,6 +11,7 @@
 #include "img.h"
 #include "sleepkey.h"
 #include "rumble.h"
+#include "dsi.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -356,22 +357,7 @@ static void time_text(char *tm, int n, char *date, int dn) {
     static const char *mo[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
     snprintf(date, (size_t)dn, "%s %d %s", wd[lt.tm_wday], lt.tm_mday, mo[lt.tm_mon]);
 }
-void status_bar(Surf *s, int y, int a) {
-    char tm[24], date[32]; time_text(tm, sizeof tm, date, sizeof date);
-    int x = ht(s, HF_BODYB, 40, y + 4, pal.text, a, 0, tm);
-    ht(s, HF_BODY, x + 18, y + 4, pal.sub, a, 0, date);
-    int chg = 0, lv = battery_level(&chg);
-    int bx = SW - 40 - 46;
-    if (lv >= 0) {
-        uint32_t bc = lv <= 15 && !chg ? 0xE5484D : chg ? 0x2FAE5C : pal.text;
-        hr_ring(s, bx, y + 10, 42, 22, 6, 3, pal.sub, a);
-        hr_fill(s, bx + 43, y + 16, 4, 10, 2, pal.sub, a);
-        hr_fill(s, bx + 5, y + 15, MAX(4, 32 * lv / 100), 12, 3, bc, a);
-        char p[8]; snprintf(p, sizeof p, "%d%%", lv);
-        bx = ht_right(s, HF_BODYB, bx - 12, y + 4, pal.sub, a, 0, p) - ht_w(HF_BODYB, p, 0);
-    }
-    if (wifi_up()) icon(s, IC_WIFI, (float)bx - 30, (float)y + 18, 28, pal.sub, a);
-}
+void status_bar(Surf *s, int y, int a) { dsi_status(s, y - 8, a); }
 
 /* an image's corners rounded off (into its alpha) */
 void img_round(Img *im, int r) {
@@ -696,13 +682,241 @@ void prerender_game(Game *g) {
 void prerender_forget(void) { pre_ok = 0; homesnap_ok = 0; }
 
 /* ---------------------------------------------------------------- the big moments */
-/* the launch: the cartridge sinks a little (the press), springs off the deck through the hinge, and rises onto the
- * stage, where it opens into its art filling the screen; a flash, and both screens go to black (the game takes the
- * panels from black) */
-#define L_LIFT 0.10f
-#define L_FLY 0.40f
-#define L_OPEN 0.78f
-#define L_END 1.05f
+/* the launch, the DSi's way, at the panels' resolution: the cartridge squashes and jumps off the deck (a trail
+ * behind it), the console's slot rises along the top screen's bottom edge, the cartridge comes up turning, hangs a
+ * moment and slams down into the slot (dust, a shake, the lamp blinking); then both screens close onto it (an iris
+ * across the two, as one picture) and the last dot of light goes out like an old TV's. Back from a game it all goes
+ * the other way: the iris opens out of the slot, the cartridge pops out, turns, and drops through the hinge onto its
+ * place on the deck. */
+#define L_SQUASH 0.08f
+#define L_UP     0.30f      /* off the top of the bottom screen */
+#define L_APEX   0.56f      /* risen high on the top screen */
+#define L_HANG   0.67f
+#define L_SLAM   0.77f      /* home, in the slot */
+#define L_IRIS   0.98f      /* the screens close onto it */
+#define L_SHUT   1.48f
+#define L_END    1.64f      /* (a moment of black: the game takes the screens from black) */
+#define R_OPEN   0.52f      /* back: the iris all the way open */
+#define R_OUT    0.80f      /* the cartridge out of the slot, at the top */
+#define R_DROP   1.00f      /* gone through the hinge */
+#define R_LAND   1.22f      /* on its place on the deck */
+#define R_END    1.55f
+#define SLOT_H 56
+#define HINGE 104           /* the hinge between the screens: the iris runs across it as across one picture */
+static float slot_top(float rise) { return SH - rise * SLOT_H; }
+static float slot_open_y(float rise) { return slot_top(rise) + 12; }
+static float top_scale(const Game *g) { return g->sys == SYS_NDS ? 10.5f : 8.9f; }
+static float slot_home_y(const Game *g) {   /* the cartridge's middle when its lower 42% is in the slot */
+    float w, h, d; cart3d_size(g->sys, &w, &h, &d);
+    return slot_open_y(1) + h * top_scale(g) * (0.42f - 0.5f);
+}
+static void draw_slot_back(Surf *s, float rise, float slit_w) {
+    if (rise <= 0.001f) return;
+    int y = (int)roundf(slot_top(rise));
+    rect_vgrad(s, 0, y, SW, 20, 0xa3a7ae, 0x868a92, 255);
+    rect_blend(s, 0, y, SW, 4, 0xc4c8ce, 255);
+    hr_fill(s, (int)(SW / 2 - slit_w / 2), y + 4, (int)slit_w, 14, 6, 0x0c0d0f, 255);
+    rect_blend(s, (int)(SW / 2 - slit_w / 2) + 8, y + 4, (int)slit_w - 16, 4, 0x2a2c30, 255);
+}
+static void draw_slot_front(Surf *s, float rise, float slit_w, int led) {
+    if (rise <= 0.001f) return;
+    int y = (int)roundf(slot_top(rise));
+    rect_blend(s, (int)(SW / 2 - slit_w / 2), y + 16, (int)slit_w, 4, 0x8e929a, 255);
+    rect_vgrad(s, 0, y + 20, SW, SH - (y + 20) + 32, 0x5e6168, 0x3a3c41, 255);
+    rect_blend(s, 0, y + 20, SW, 4, 0x70747b, 255);
+    uint32_t lc = led == 2 ? 0x46f04a : led == 1 ? 0x2fae32 : 0x2a3a2a;
+    hi_circle(s, 928, y + 38, 7, 0, lc, 255);
+    if (led == 2) h_glow(s, 928, y + 38, 26, 0x46f04a, 110);
+    ht(s, HF_XS, 56, y + 22, 0x9da1a8, 255, 2, "DSi XL");
+}
+
+/* particles: the slam's dust and sparkles */
+typedef struct { float x, y, vx, vy, age, life, size; uint32_t c; int spark; } Part;
+static Part parts[96]; static int nparts;
+static void spawn(float x, float y, float vx, float vy, float life, float size, uint32_t c, int spark) {
+    if (nparts >= 96) return;
+    parts[nparts++] = (Part){ x, y, vx, vy, 0, life, size, c, spark };
+}
+static void parts_step(float dt) {
+    for (int i = 0; i < nparts; i++) {
+        Part *p = &parts[i];
+        p->age += dt; p->x += p->vx * dt; p->y += p->vy * dt;
+        if (!p->spark) { p->vy += 1400 * dt; p->vx *= 1 - 2.5f * dt; }
+        if (p->age >= p->life) { parts[i--] = parts[--nparts]; }
+    }
+}
+static void parts_draw(Surf *s) {
+    for (int i = 0; i < nparts; i++) {
+        Part *p = &parts[i]; float k = 1 - p->age / p->life;
+        if (p->spark) dsi_sparkle(s, p->x, p->y, p->size * (0.4f + 0.6f * k), 0xffffff, (int)(255 * MIN(1.0f, k * 1.6f)));
+        else hi_circle(s, p->x, p->y, p->size * (0.6f + 0.4f * k), 0, p->c, (int)(200 * k));
+    }
+}
+static double shake_t = -10; static float shake_amp;
+static void slam(void) {
+    sfx(SFX_SLAM); buzz(90, 1.0f);
+    shake_t = T; shake_amp = 18;
+    for (int i = 0; i < 26; i++) {
+        float side = (i & 1) ? 1 : -1, sp = 120 + (hash3(i, 1, 7) % 280);
+        spawn(SW / 2 + side * (80 + (hash3(i, 2, 7) % 160)), slot_open_y(1) - 4, side * sp, -(60 + (float)(hash3(i, 3, 7) % 160)),
+              0.5f + (hash3(i, 4, 7) % 40) / 100.0f, 10 + (hash3(i, 5, 7) % 14), 0x8a8478, 0);
+    }
+    for (int i = 0; i < 8; i++) spawn(SW / 2 + ((int)(hash3(i, 9, 3) % 480) - 240), slot_open_y(1) - 24 - (hash3(i, 8, 3) % 120), 0, -40, 0.5f, 5, 0xffffff, 1);
+}
+
+/* the iris: both screens one picture (the hinge between), the circle round (cx, cy) in the top screen's pixels */
+static float iris_cy(const Game *g) {
+    float w, h, d; cart3d_size(g->sys, &w, &h, &d);
+    float home = slot_home_y(g);
+    return MIN((home - h * top_scale(g) * 0.5f + slot_open_y(1)) * 0.5f, SH - 1 - 136 * 1.12f);
+}
+static float iris_full(float cy) { float dy = SH + HINGE + SH - cy; return sqrtf(520.f * 520.f + dy * dy); }
+static void iris_screen(Surf *s, float y0, float cy, float r) {
+    int rim = (int)(170 * clampf(r / 120, 0, 1));
+    for (int y = 0; y < SH; y++) {
+        float dy = fabsf(y0 + y + 0.5f - cy);
+        if (dy >= r) { rectf(s, 0, y, SW, 1, 0x000000); continue; }
+        float h = sqrtf(r * r - dy * dy), hn = dy + 4 < r ? sqrtf(r * r - (dy + 4) * (dy + 4)) : 0;
+        int x0 = (int)roundf(SW / 2 - h), x1 = (int)roundf(SW / 2 + h), n0 = (int)roundf(SW / 2 - hn), n1 = (int)roundf(SW / 2 + hn);
+        if (x0 > 0) rectf(s, 0, y, MIN(x0, SW), 1, 0x000000);
+        if (x1 < SW) rectf(s, MAX(x1, 0), y, SW - MAX(x1, 0), 1, 0x000000);
+        if (rim > 0 && x1 > x0) {
+            int lw = MAX(6, n0 - x0), rw = MAX(6, x1 - n1);
+            if (lw + rw >= x1 - x0) rect_blend(s, x0, y, x1 - x0, 1, 0xffffff, rim);
+            else { rect_blend(s, x0, y, lw, 1, 0xffffff, rim); rect_blend(s, x1 - rw, y, rw, 1, 0xffffff, rim); }
+        }
+    }
+}
+static void iris(Surf *top, Surf *bot, float cy, float r, float dot) {
+    iris_screen(top, 0, cy, MAX(r, 0));
+    iris_screen(bot, SH + HINGE, cy, MAX(r, 0));
+    if (dot > 0.05f) { hi_circle(top, SW / 2, cy, dot, 0, 0xffffff, 255); h_glow(top, SW / 2, cy, dot * 3, 0xffffff, 90); }
+}
+static float iris_close_r(float k, float full) {
+    const float F = 136;
+    if (k < 0.55f) return lerpf(full, F, ease_in_out(k / 0.55f));
+    if (k < 0.78f) return lerpf(F, F * 0.86f, ease_out_cubic((k - 0.55f) / 0.23f));
+    return F * 0.86f * (1 - ease_in_cubic((k - 0.78f) / 0.22f));
+}
+/* the deck's pose of the selected cartridge */
+static void deck_pose(Game *g, CartPose *p) {
+    float x, y, w, h; home_cart_rect(g, &x, &y, &w, &h);
+    float mw, mh, md; cart3d_size(g->sys, &mw, &mh, &md);
+    memset(p, 0, sizeof *p);
+    p->sx = x + w / 2; p->sy = y + h / 2 + 16; p->scale = w / mw; p->alpha = 1; p->bright = 1; p->pitch = 0.08f;
+}
+static void shake(Surf *s) {
+    float k = (float)(T - shake_t) / 0.3f;
+    if (k < 0 || k >= 1) return;
+    int dy = (int)(shake_amp * (1 - k) * sinf(k * 40)), dx = (int)(shake_amp * 0.4f * (1 - k) * sinf(k * 31 + 1));
+    surf_shift(s, dx, dy, 0x3a3c41);
+}
+static void launch_draw(Surf *top, Surf *bot, Game *g, float t) {
+    float mw, mh, md; cart3d_size(g->sys, &mw, &mh, &md);
+    CartPose base; deck_pose(g, &base);
+    /* the deck: the cartridge squashes, then jumps off the top edge, a trail behind it */
+    if (t < L_UP) {
+        CartPose p = base;
+        if (t < L_SQUASH) { float k = sinf(t / L_SQUASH * PI_F); p.sy += 12 * k; p.stretch_y = 1 - 0.1f * k; p.stretch_x = 1 + 0.06f * k; }
+        else {
+            float k = ease_in_cubic((t - L_SQUASH) / (L_UP - L_SQUASH));
+            float y1 = -mh * p.scale - 80;
+            p.sy = lerpf(base.sy, y1, k); p.scale *= 1 + 0.35f * k; p.pitch = lerpf(p.pitch, 0.25f, k);
+            for (int j = 3; j >= 1; j--) {
+                CartPose q = p; float kk = ease_in_cubic(MAX(0.0f, (t - j * 0.018f - L_SQUASH) / (L_UP - L_SQUASH)));
+                q.sy = lerpf(base.sy, y1, kk); q.alpha = 0.18f * (4 - j) / 3.0f;
+                cart3d_draw(bot, g, &q);
+            }
+        }
+        cart3d_draw(bot, g, &p);
+    }
+    /* the top: the slot rises; the cartridge comes up from below turning, hangs, and slams down into it */
+    float rise = ease_out_back(clampf((t - 0.12f) / 0.26f, 0, 1));
+    float sc = top_scale(g), slit = mw * sc + 32;
+    float apex_y = 264, home = slot_home_y(g);
+    rect_blend(top, 0, 0, SW, SH, 0x000000, (int)(70 * smoothstep(0.1f, 0.5f, t)));   /* (the stage dims a little) */
+    draw_slot_back(top, rise, slit);
+    if (t >= L_UP - 0.05f) {
+        CartPose p; memset(&p, 0, sizeof p);
+        p.sx = SW / 2; p.alpha = 1; p.bright = 1.05f; p.scale = sc;
+        if (t < L_APEX) {
+            float k = ease_out_cubic((t - (L_UP - 0.05f)) / (L_APEX - L_UP + 0.05f));
+            p.sy = lerpf(SH + mh * sc * 0.6f, apex_y, k);
+            p.yaw = (1 - k) * 2 * PI_F;                          /* a full turn on the way up */
+            p.pitch = (1 - k) * 0.5f; p.roll = sinf(k * PI_F) * 0.08f;
+        } else if (t < L_HANG) {
+            float k = (t - L_APEX) / (L_HANG - L_APEX);
+            p.sy = apex_y - sinf(k * PI_F) * 12;
+            p.roll = sinf(k * PI_F * 2) * 0.03f; p.pitch = -0.05f * sinf(k * PI_F);
+        } else if (t < L_SLAM) {
+            float k = ease_in_cubic((t - L_HANG) / (L_SLAM - L_HANG));
+            p.sy = lerpf(apex_y - 12, home, k);
+            p.scale = sc * (1 + 0.04f * k);
+            for (int j = 0; j < 6; j++) {   /* motion lines on the way down */
+                float lx = SW / 2 - mw * sc * 0.45f + j * mw * sc * 0.18f, top_y = p.sy - mh * sc * 0.5f;
+                hi_line(top, lx, top_y - 88 * k, lx, top_y - 16, 4, 0x9a9a9a, (int)(140 * k));
+            }
+        } else {
+            float k = (t - L_SLAM) / 0.22f;   /* home: a small bounce, then still */
+            p.sy = home - (k < 1 ? sinf(k * PI_F) * 12 * (1 - k) : 0);
+            p.scale = sc * (k < 1 ? 1 + 0.03f * (1 - k) * cosf(k * PI_F * 3) : 1);
+        }
+        Surf clip = *top; surf_clip(&clip, 0, 0, SW, rise > 0.001f ? (int)roundf(slot_open_y(rise)) : SH);
+        cart3d_draw(&clip, g, &p);
+    }
+    draw_slot_front(top, rise, slit, t >= L_SLAM ? ((int)((t - L_SLAM) * 8) % 2 ? 2 : 1) : 0);
+    parts_draw(top);
+    shake(top);
+    if (t >= L_IRIS) {
+        float k = clampf((t - L_IRIS) / (L_SHUT - L_IRIS), 0, 1), cy = iris_cy(g);
+        float r = iris_close_r(k, iris_full(cy));
+        float dot = t > L_SHUT ? 10 * (1 - (t - L_SHUT) / (L_END - L_SHUT - 0.04f)) : 0;
+        iris(top, bot, cy, k >= 1 ? 0 : r, dot);
+        if (k >= 1) { fill(bot, 0); if (dot <= 0.05f) fill(top, 0); }
+    }
+}
+static void return_draw(Surf *top, Surf *bot, Game *g, float t) {
+    float mw, mh, md; cart3d_size(g->sys, &mw, &mh, &md);
+    float sc = top_scale(g), slit = mw * sc + 32, home = slot_home_y(g), apex_y = 300;
+    /* the slot sinks away once the cartridge is out */
+    float rise = t < R_OUT ? 1 : 1 - ease_in_cubic(clampf((t - R_OUT) / 0.2f, 0, 1));
+    rect_blend(top, 0, 0, SW, SH, 0x000000, (int)(70 * (1 - smoothstep(R_OUT, R_DROP, t))));
+    draw_slot_back(top, rise, slit);
+    if (t < R_DROP) {
+        CartPose p; memset(&p, 0, sizeof p);
+        p.sx = SW / 2; p.alpha = 1; p.bright = 1.05f; p.scale = sc;
+        if (t < R_OPEN) p.sy = home;
+        else if (t < R_OUT) {
+            float k = ease_out_back(clampf((t - R_OPEN) / (R_OUT - R_OPEN), 0, 1));
+            p.sy = lerpf(home, apex_y, k); p.yaw = k * PI_F; p.pitch = -0.1f * sinf(k * PI_F);
+        } else {
+            float k = ease_in_cubic((t - R_OUT) / (R_DROP - R_OUT));
+            p.sy = lerpf(apex_y, SH + mh * sc * 0.7f, k); p.yaw = PI_F + k * PI_F; p.pitch = 0.3f * k;
+        }
+        Surf clip = *top; surf_clip(&clip, 0, 0, SW, t < R_OUT ? (int)roundf(slot_open_y(rise)) : SH);
+        cart3d_draw(&clip, g, &p);
+    }
+    draw_slot_front(top, rise, slit, t < R_OPEN ? 2 : 0);
+    /* the deck: it drops in from the top edge and lands on its place: a squash, the jelly */
+    if (t > R_DROP - 0.04f && t < R_END) {
+        CartPose base; deck_pose(g, &base);
+        CartPose p = base;
+        if (t < R_LAND) {
+            float k = ease_in_cubic(clampf((t - (R_DROP - 0.04f)) / (R_LAND - R_DROP + 0.04f), 0, 1));
+            p.sy = lerpf(-mh * base.scale, base.sy, k); p.pitch = 0.3f * (1 - k); p.scale *= 1 + 0.2f * (1 - k);
+        } else {
+            float k = (t - R_LAND) / (R_END - R_LAND);
+            float sq = expf(-6 * k) * sinf(k * 22) * 0.12f;
+            p.stretch_y = 1 - sq; p.stretch_x = 1 + sq * 0.6f;
+        }
+        cart3d_draw(bot, g, &p);
+    }
+    if (t < R_OPEN) {
+        float k = ease_in_out(clampf((t - 0.06f) / (R_OPEN - 0.06f), 0, 1)), cy = iris_cy(g);
+        iris(top, bot, cy, k * iris_full(cy) + (k > 0 ? 0 : 0), 0);
+    }
+}
+
 void start_launch(int how) {
     Game *g = cur_game(); if (!g || seq != Q_NONE) return;
     launch_g = g; launch_how = how; seq = Q_LAUNCH; seq_t = 0;
@@ -729,60 +943,8 @@ static void seq_draw(Surf *top, Surf *bot) {
     float t = (float)seq_t;
     Game *g = launch_g ? launch_g : cur_game();
     Art *A = g ? art_get(g) : 0;
-    uint32_t deep = A && A->state ? A->deep : 0x111318;
-    if (seq == Q_LAUNCH && g) {
-        float cx, cy, cw, ch; home_cart_rect(g, &cx, &cy, &cw, &ch);
-        /* the deck: the cartridge squashes, then jumps off the top edge; the deck sinks into the game's colour */
-        float k = smoothstep(L_LIFT, L_OPEN, t);
-        rect_blend(bot, 0, 0, SW, SH, deep, (int)(235 * k));
-        if (t < L_FLY) {
-            float sq = t < L_LIFT ? sinf(t / L_LIFT * PI_F) : 0;
-            float up = ease_in_cubic(sat((t - L_LIFT) / (L_FLY - L_LIFT)));
-            float sc = 1 + 0.16f * up - 0.04f * sq, w = cw * sc, h = ch * sc;
-            float y = cy + ch * 0.05f * sq - up * (cy + ch + 60);
-            cart_draw(bot, g, cx + cw / 2 - w / 2, y, w, h, 255);
-        }
-        /* the stage: it comes up through the hinge and opens into the art */
-        float f0 = L_FLY - 0.12f;
-        if (t > f0) {
-            float f = ease_out_cubic(sat((t - f0) / (L_OPEN - f0)));
-            float rise = ease_out_back(sat((t - f0) / 0.30f));
-            float w0 = cw * 1.2f, h0 = ch * 1.2f;
-            float grow = smoothstep(0.25f, 1, f);
-            float w = lerpf(w0, (float)SW, grow), h = lerpf(h0, (float)SH, grow);
-            float yc = lerpf(SH + h0 / 2, SH / 2.f, rise);
-            rect_blend(top, 0, 0, SW, SH, deep, (int)(230 * sat(f * 2.5f)));
-            if (grow < 0.02f) cart_draw(top, g, SW / 2 - w / 2, yc - h / 2, w, h, 255);
-            else game_cover(top, g, (int)(SW / 2 - w / 2), (int)(yc - h / 2), (int)w, (int)h, (int)(28 * (1 - grow)), 255);
-        }
-        float wf = 1 - fabsf(t - L_OPEN) / 0.09f;            /* a flash of light as it opens */
-        if (wf > 0) rect_blend(top, 0, 0, SW, SH, 0xffffff, (int)(140 * wf));
-        float b = smoothstep(L_OPEN, L_END - 0.04f, t);
-        if (b > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * b)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * b)); }
-    }
-    if (seq == Q_RETURN && g) {
-        /* back: out of black the art fills the stage, folds into its cartridge, which drops through the hinge onto
-         * the deck and settles with a bounce */
-        float cx, cy, cw, ch; home_cart_rect(g, &cx, &cy, &cw, &ch);
-        float f = 1 - ease_in_out(sat((t - 0.10f) / 0.42f));
-        if (t < 0.70f) {
-            float w = lerpf(cw * 1.2f, (float)SW, f), h = lerpf(ch * 1.2f, (float)SH, f);
-            float yc = SH / 2.f + (t > 0.48f ? ease_in_cubic((t - 0.48f) / 0.22f) * (SH / 2.f + h) : 0);
-            rect_blend(top, 0, 0, SW, SH, deep, (int)(230 * sat(f * 1.6f)));
-            if (f > 0.02f) game_cover(top, g, (int)(SW / 2 - w / 2), (int)(yc - h / 2), (int)w, (int)h, (int)(28 * (1 - f)), 255);
-            else cart_draw(top, g, SW / 2 - w / 2, yc - h / 2, w, h, 255);
-        }
-        rect_blend(bot, 0, 0, SW, SH, deep, (int)(200 * (1 - smoothstep(0.55f, 0.85f, t))));
-        float d = sat((t - 0.62f) / 0.40f);
-        if (t > 0.62f && t < 1.05f) {
-            /* a spring's landing: past its place, back, settled */
-            float e = d >= 1 ? 1 : 1 - expf(-7 * d) * cosf(d * 9.5f);
-            float y = lerpf(-ch - 40, cy, e), sq = d > 0.25f ? 0.05f * expf(-9 * (d - 0.25f)) * sinf((d - 0.25f) * 30) : 0;
-            cart_draw(bot, g, cx - cw * sq / 2, y + ch * sq, cw * (1 + sq), ch * (1 - sq), 255);
-        }
-        float b = 1 - smoothstep(0, 0.22f, t);
-        if (b > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * b)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * b)); }
-    }
+    if (seq == Q_LAUNCH && g) launch_draw(top, bot, g, t);
+    if (seq == Q_RETURN && g) return_draw(top, bot, g, t);
     if (seq == Q_SLEEP || seq == Q_ASLEEP) {
         /* good night: the screens dim, a moon rises in a soft light, then it too goes out */
         float k = smoothstep(0, 0.45f, t), m = ease_out_back(sat((t - 0.12f) / 0.55f)), out = smoothstep(0.95f, 1.5f, t);
@@ -833,14 +995,18 @@ static void seq_update(float dt) {
     switch (seq) {
     case Q_BOOT: if (t > 1.6f) seq = Q_NONE; break;
     case Q_LAUNCH:
-        if (crossed(t, dt, L_LIFT)) { sfx(SFX_LAUNCH); buzz(45, 0.55f); }
-        if (crossed(t, dt, L_FLY - 0.1f)) sfx(SFX_IRIS_IN);
+        parts_step(dt);
+        if (crossed(t, dt, L_SQUASH)) { sfx(SFX_LAUNCH); buzz(40, 0.5f); }
+        if (crossed(t, dt, L_SLAM)) slam();
+        if (crossed(t, dt, L_IRIS)) sfx(SFX_IRIS_IN);
         if (t >= L_END) { write_launch(); exit_code = EXIT_LAUNCH; }
         break;
     case Q_RETURN:
-        if (crossed(t, dt, 0.05f)) sfx(SFX_IRIS_OUT);
-        if (crossed(t, dt, 0.82f)) { sfx(SFX_SLAM); buzz(35, 0.5f); }
-        if (t > 1.05f) { seq = Q_NONE; launch_g = 0; if (cfg.music) music_play(); }
+        parts_step(dt);
+        if (crossed(t, dt, 0.04f)) sfx(SFX_IRIS_OUT);
+        if (crossed(t, dt, R_OPEN)) { sfx_ex(SFX_WHOOSH, 1.2f, 0.7f); buzz(20, 0.3f); }
+        if (crossed(t, dt, R_LAND)) { sfx(SFX_SLAM); buzz(45, 0.6f); }
+        if (t > R_END) { seq = Q_NONE; launch_g = 0; if (cfg.music) music_play(); }
         break;
     case Q_SLEEP:
         if (t > 1.55f) {

@@ -131,6 +131,8 @@ extern int tch_dead;                                     /* a touch begun before
 /* the cartridge: where the selected one rests on the deck, and one drawn at any rect (its sprite, scaled) */
 void home_cart_rect(Game *g, float *x, float *y, float *w, float *h);
 void cart_draw(Surf *s, Game *g, float x, float y, float w, float h, int a);
+#include "cart3d.h"
+void cart_pose_draw(Surf *s, Game *g, const CartPose *p);
 extern int cover_fast;
 void cover_prepare(Game *g, int w, int h, int r);   /* game_cover's picture at that size made now (nothing drawn) */                  /* game_cover: things in motion (scaled straight, nothing kept) */
 void img_round(Img *im, int r);         /* an image's corners rounded off, into its alpha */

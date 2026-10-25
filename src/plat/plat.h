@@ -66,7 +66,10 @@ extern int plat_lcd;
  * (gap); 0 (nothing written) when the look is off or k is under 3 */
 int lcd_rows(const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap);
 int lcd_rows_mode(int mode, const uint32_t *src, int w, int k, uint32_t *row, uint32_t *gap);   /* (any mode: previews) */
-uint32_t lcd_nds_color(uint32_t c);                 /* the DS screen's colour profile of one colour */
+uint32_t lcd_nds_color(uint32_t c);
+/* the panels at their own resolution: two rows of a frame as the LCD shows them (blocks of 2x2: see lcd.c); 0 when
+ * the look is off */
+int lcd2_pair(int mode, const uint32_t *r0, const uint32_t *r1, int w, uint32_t *o0, uint32_t *o1);                 /* the DS screen's colour profile of one colour */
 const char *plat_data_dir(void);              /* where scores and settings live (created) */
 void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

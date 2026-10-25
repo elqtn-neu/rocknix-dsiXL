@@ -5,6 +5,7 @@
 #include "img.h"
 #include "hgfx.h"
 #include "config.h"
+#include "cart3d.h"
 #include <pthread.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -21,7 +22,7 @@ static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 typedef struct { Game copy; Game *g; unsigned gen; } Want;
 static Want queue[QMAX]; static int qn;
 static unsigned gen;
-typedef struct { Game *g; unsigned gen; Img im; int ok; uint32_t vivid, deep; } Done;
+typedef struct { Game *g; unsigned gen; Img im; int ok; uint32_t vivid, deep; Img face; int face_kind; } Done;
 static Done done[QMAX]; static int dn;
 static unsigned clock_;
 static int started;
@@ -99,15 +100,18 @@ static void *loader(void *arg) {
         Want w = queue[--qn];                           /* the newest wish */
         pthread_mutex_unlock(&mu);
         Game *g = &w.copy;
-        Done d = { w.g, w.gen, { 0 }, 0, 0, 0 };
+        Done d = { w.g, w.gen, { 0 }, 0, 0, 0, { 0 }, 0 };
         char p[900];
-        static const char *kinds[] = { "box", "cart", "label" };
+        static const char *kinds[] = { "box", "label", "cart" };
         for (int k = 0; k < 3 && !d.ok; k++)
             if (library_media(g, kinds[k], p, sizeof p) && !img_load_fit(p, 400, 440, FIT_CONTAIN, cfg.cache, &d.im)) d.ok = 1;
+        /* the cartridge's own face: a scan of it, else of its label */
+        if (library_media(g, "cart", p, sizeof p) && !img_load_fit(p, 600, 600, FIT_CONTAIN, cfg.cache, &d.face)) d.face_kind = 1;
+        else if (library_media(g, "label", p, sizeof p) && !img_load_fit(p, 600, 600, FIT_CONTAIN, cfg.cache, &d.face)) d.face_kind = 2;
         if (d.ok) h_main_colors(&d.im, &d.vivid, &d.deep);
         else title_colors(g, &d.vivid, &d.deep);
         pthread_mutex_lock(&mu);
-        if (dn < QMAX) done[dn++] = d; else img_free(&d.im);
+        if (dn < QMAX) done[dn++] = d; else { img_free(&d.im); img_free(&d.face); }
         pthread_mutex_unlock(&mu);
     }
     return 0;
@@ -144,7 +148,7 @@ void art_init(void) {
     }
 }
 
-static void art_free(Art *a) { img_free(&a->cover); img_free(&a->sprite); img_free(&a->hero); img_free(&a->hero2); }
+static void art_free(Art *a) { img_free(&a->cover); img_free(&a->face); img_free(&a->hero); img_free(&a->hero2); a->face_kind = 0; }
 
 static void evict(void) {
     int n = 0;
@@ -182,12 +186,14 @@ int art_step(void) {
     n = dn; memcpy(got, done, sizeof(Done) * (size_t)n); dn = 0;
     pthread_mutex_unlock(&mu);
     for (int i = 0; i < n; i++) {
-        if (got[i].gen != gen) { img_free(&got[i].im); continue; }
+        if (got[i].gen != gen) { img_free(&got[i].im); img_free(&got[i].face); continue; }
         Art *a = got[i].g->art;
-        if (!a || a->state != 0) { img_free(&got[i].im); continue; }
+        if (!a || a->state != 0) { img_free(&got[i].im); img_free(&got[i].face); continue; }
         a->cover = got[i].im; a->state = got[i].ok ? 1 : -1;
+        a->face = got[i].face; a->face_kind = got[i].face_kind;
         a->vivid = got[i].vivid; a->deep = got[i].deep;
-        img_free(&a->sprite); img_free(&a->hero); img_free(&a->hero2);
+        img_free(&a->hero); img_free(&a->hero2);
+        cart3d_forget(got[i].g);
     }
     if (n) evict();
     return n > 0;
@@ -197,14 +203,15 @@ void art_forget(Game *g) {
     Art *a = g->art; if (!a) return;
     pthread_mutex_lock(&mu); gen++; pthread_mutex_unlock(&mu);   /* (a load of the old picture under way: dropped) */
     art_free(a); a->state = 0xdead;
+    cart3d_forget(g);
 }
 
 void art_reset(void) {
     pthread_mutex_lock(&mu); qn = 0; gen++;
-    for (int i = 0; i < dn; i++) img_free(&done[i].im);
+    for (int i = 0; i < dn; i++) { img_free(&done[i].im); img_free(&done[i].face); }
     dn = 0; pthread_mutex_unlock(&mu);
     for (int s = 0; s < SYS_COUNT; s++) for (int i = 0; i < lib[s].n; i++) {
         Art *a = lib[s].g[i].art; if (!a) continue;
-        art_free(a); free(a); lib[s].g[i].art = 0;
+        art_free(a); free(a); lib[s].g[i].art = 0; cart3d_forget(&lib[s].g[i]);
     }
 }

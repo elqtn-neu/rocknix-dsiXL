@@ -1,9 +1,9 @@
-// hfont.h: the menu's text at the panels' own resolution: M PLUS Rounded 1c, baked by tools/gen_hdfont.py at each size
+// hfont.h: the menu's text at the panels' own resolution: M PLUS 1p, baked by tools/gen_hdfont.py at each size
 // the menu uses (4 bits of coverage a pixel).
 #pragma once
 #include "gfx.h"
 
-enum { HF_CAPS, HF_SMALL, HF_BODY, HF_BODYB, HF_LABEL, HF_BTN, HF_TITLE, HF_HERO, HF_HUGE, HF_CLOCK, HF_COUNT };
+enum { HF_CAPS, HF_SMALL, HF_BODY, HF_BODYB, HF_LABEL, HF_BTN, HF_TITLE, HF_HERO, HF_HUGE, HF_CLOCK, HF_MD, HF_BD, HF_LG, HF_LOGO, HF_XS, HF_COUNT };
 
 typedef struct { uint16_t cp; uint32_t off; uint16_t w, h; int16_t ox, oy; int16_t adv; } HGlyph;
 typedef struct { int ascent, descent, count; const HGlyph *glyphs; const uint8_t *bits; } HFontData;

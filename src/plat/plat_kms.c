@@ -315,6 +315,15 @@ static int k_init(PlatInfo *info) {
 static void upscale_rows(Panel *p, Buf *b, const Surf *s, int y0, int y1) {
     int k = p->scale, w = MIN(s->w, p->lw), h = MIN(s->h, p->lh);
     if (k == 1) {                                       /* native: straight copies of the rows asked for */
+        if (plat_lcd) {
+            /* (or the LCD's look: whole 2x2 blocks, so the rows in pairs) */
+            for (int y = MAX(0, y0) & ~1; y + 1 < MIN(h, y1 + 1); y += 2) {
+                uint8_t *dst = (uint8_t *)b->map + (size_t)(p->oy + y) * b->pitch + (size_t)p->ox * 4;
+                lcd2_pair(plat_lcd, s->px + (size_t)y * s->pitch, s->px + (size_t)(y + 1) * s->pitch, w, rowbuf, gapbuf);
+                memcpy(dst, rowbuf, (size_t)w * 4); memcpy(dst + b->pitch, gapbuf, (size_t)w * 4);
+            }
+            return;
+        }
         for (int y = MAX(0, y0); y < MIN(h, y1); y++)
             memcpy((uint8_t *)b->map + (size_t)(p->oy + y) * b->pitch + (size_t)p->ox * 4, s->px + (size_t)y * s->pitch, (size_t)w * 4);
         return;
