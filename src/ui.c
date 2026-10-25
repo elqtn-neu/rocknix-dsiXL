@@ -12,6 +12,7 @@
 #include "sleepkey.h"
 #include "rumble.h"
 #include "dsi.h"
+#include "cart3d.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +54,8 @@ void spr_step(Spr *s, float k, float c, float dt) {
     if (fabsf(s->to - s->x) < 0.0005f && fabsf(s->v) < 0.005f) { s->x = s->to; s->v = 0; }
 }
 int spr_moving(const Spr *s, float eps) { return fabsf(s->to - s->x) > eps || fabsf(s->v) > eps * 4; }
-void dirty(int screen) { if (screen >= 0 && screen < 2) dirty_s[screen] = 1; }
+void dirty(int screen) {
+    if (screen == 0 && getenv("DBGD")) fprintf(stderr, "D0 %p\n", __builtin_return_address(0)); if (screen >= 0 && screen < 2) dirty_s[screen] = 1; }
 int frame_dirty(void) { return dirty_s[0] || dirty_s[1]; }
 void buzz(int ms, float k) { if (cfg.rumble) rumble(ms, k); }
 void buzz2(int ms, float k) { if (cfg.rumble) rumble_double(ms, k); }
@@ -1181,7 +1183,11 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     static int minute = -1;
     { time_t t = time(0); struct tm lt; localtime_r(&t, &lt); if (lt.tm_min != minute) { minute = lt.tm_min; theme_update(); dirty(0); } }
     if (theme_changed()) { home_selection_changed(); pre_ok = homesnap_ok = 0; }
-    if (art_step()) { home_selection_changed(); base_ok = 0; pre_ok = homesnap_ok = 0; dirty(0); dirty(1); }
+    /* (a picture arriving for another game: only the deck changes, the stage and the caches stay) */
+    {   int r = art_step(cur_game());
+        if (r == 3) { home_selection_changed(); base_ok = 0; pre_ok = homesnap_ok = 0; dirty(1); }
+        else if (r) { homesnap_ok = 0; dirty(1); } }
+    if (cart3d_frame()) dirty(1);
     osd_poll();
     rumble_tick();
     battery_watch();

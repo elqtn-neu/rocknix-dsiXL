@@ -21,4 +21,6 @@ void cart3d_size(int sys, float *w, float *h, float *d);   /* mm */
 void cart3d_draw(Surf *s, Game *g, const CartPose *p);
 /* its picture made now (on a frame with time to spare), so it's ready before it's seen; 1 when that was done */
 int cart3d_prepare(Game *g);
-void cart3d_forget(Game *g);    /* its art changed */
+void cart3d_forget(Game *g);
+/* a new frame: a cartridge not made yet is made at most two a frame (more wait, unseen, a frame or two) */
+int cart3d_frame(void);   /* 1: one waited last frame (draw again) */    /* its art changed */

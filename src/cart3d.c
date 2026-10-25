@@ -301,8 +301,11 @@ static void reflect(Surf *s, const Img *im, int x, int y, int floor_y, float k, 
     }
 }
 
+static int budget = 2, deferred;
+int cart3d_frame(void) { int d = deferred; budget = 2; deferred = 0; return d; }
 void cart3d_draw(Surf *s, Game *g, const CartPose *p) {
     if (p->alpha <= 0.004f || p->scale <= 0.01f) return;
+    if (!g->cart) { if (budget <= 0) { deferred = 1; return; } budget--; }
     cart3d_prepare(g);
     CartData *cd = g->cart;
     if (!cd) return;

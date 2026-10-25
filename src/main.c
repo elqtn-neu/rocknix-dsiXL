@@ -26,19 +26,19 @@ static volatile sig_atomic_t term;
  * in a headless run, summed up at the end */
 static double cpu_now(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return (double)t.tv_sec + t.tv_nsec * 1e-9; }
 static int prof_on;
-static double prof_ms[20000]; static int prof_n, prof_idle;
-static void prof_add(double ms, int drew) { if (!drew) { prof_idle++; return; } if (prof_n < 20000) prof_ms[prof_n++] = ms; }
+static double prof_ms[20000]; static int prof_n, prof_idle, prof_top, prof_bot;
+static void prof_add(double ms, int drew) { if (!drew) { prof_idle++; return; } prof_top += drew & 1; prof_bot += drew >> 1 & 1; if (prof_n < 20000) prof_ms[prof_n++] = ms; }
 static int cmpd(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
 static void prof_report(const char *why) {
     if (!prof_n) { plat_log("profile %s: %d frames, none drawn", why, prof_idle); if (getenv("DSIXL_VERBOSE")) {} return; }
     qsort(prof_ms, (size_t)prof_n, sizeof(double), cmpd);
     double sum = 0; for (int i = 0; i < prof_n; i++) sum += prof_ms[i];
     char b[200];
-    snprintf(b, sizeof b, "profile %s: %d drawn (%d idle): mean %.2f ms, p50 %.2f, p95 %.2f, max %.2f", why, prof_n, prof_idle,
+    snprintf(b, sizeof b, "profile %s: %d drawn (%d idle; top %d, bottom %d): mean %.2f ms, p50 %.2f, p95 %.2f, max %.2f", why, prof_n, prof_idle, prof_top, prof_bot,
              sum / prof_n, prof_ms[prof_n / 2], prof_ms[prof_n * 95 / 100], prof_ms[prof_n - 1]);
     plat_log("%s", b);
     if (prof_on > 1) fprintf(stderr, "%s\n", b);
-    prof_n = prof_idle = 0;
+    prof_n = prof_idle = prof_top = prof_bot = 0;
 }
 /* the time, counting the time asleep too (the monotonic clock stops while the handheld sleeps) */
 static double boottime(void) { struct timespec t; clock_gettime(CLOCK_BOOTTIME, &t); return (double)t.tv_sec + t.tv_nsec * 1e-9; }
@@ -166,7 +166,8 @@ int main(int argc, char **argv) {
         plat_present(&top, &bot);
         if (prof_on) {
             double ms = (cpu_now() - c0) * 1000;
-            prof_add(ms, ui_drew());
+            {   static double from = -1; if (from < 0) from = getenv("DSIXL_PROFILE_FROM") ? atof(getenv("DSIXL_PROFILE_FROM")) : 0;
+                if ((headless ? vt : plat_now()) >= from) prof_add(ms, ui_drew()); }
             if (prof_on > 2 && ms > 6) fprintf(stderr, "slow frame at %.2f s: %.1f ms\n", headless ? vt : plat_now(), ms);
             (void)c1;
             static double next; if (!headless && plat_now() > next) { if (next) prof_report("5 s"); next = plat_now() + 5; }

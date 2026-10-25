@@ -180,8 +180,8 @@ Art *art_get(Game *g) {
     return a;
 }
 
-int art_step(void) {
-    Done got[QMAX]; int n;
+int art_step(const Game *watch) {
+    Done got[QMAX]; int n, r = 0;
     pthread_mutex_lock(&mu);
     n = dn; memcpy(got, done, sizeof(Done) * (size_t)n); dn = 0;
     pthread_mutex_unlock(&mu);
@@ -194,9 +194,10 @@ int art_step(void) {
         a->vivid = got[i].vivid; a->deep = got[i].deep;
         img_free(&a->hero); img_free(&a->hero2);
         cart3d_forget(got[i].g);
+        r |= got[i].g == watch ? 3 : 1;
     }
     if (n) evict();
-    return n > 0;
+    return r;
 }
 
 void art_forget(Game *g) {

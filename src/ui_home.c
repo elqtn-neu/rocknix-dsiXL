@@ -86,8 +86,10 @@ static Surf stage, stage_old; static int stage_old_ok;   /* (the old one is a re
 static Game *stage_g; static int stage_ok, stage_tab = -1; static double stage_t = -10;
 static int stage_wait_dss; static char stage_dss[800];
 static double sel_t = -10, sel_gap = 10;          /* when the selection last moved, and the step before that */
+static int stage_waits(void);
 void home_selection_changed(void) {
-    stage_ok = 0; prefetched = 0; prerender_forget(); dirty(0);
+    stage_ok = 0; prefetched = 0; prerender_forget();
+    if (!stage_waits()) dirty(0);                    /* (else home_update asks for it once the shelf slows) */
     if (building) build_g = 0;                       /* (a stage half made from what just changed: made again) */
 }
 
@@ -101,11 +103,12 @@ static int tag(Surf *s, int x, int y, const char *t, int hot) {
     return x + w + 14;
 }
 /* a game's name as a logo, kept for the last few */
+static struct { Game *g; Img im; unsigned use; } lc[8]; static unsigned lc_clk;
+static int logo_cached(Game *g) { for (int i = 0; i < 8; i++) if (lc[i].g == g && lc[i].im.px) return 1; return 0; }
 static const Img *logo_of(Game *g) {
-    static struct { Game *g; Img im; unsigned use; } lc[8]; static unsigned clk;
-    for (int i = 0; i < 8; i++) if (lc[i].g == g && lc[i].im.px) { lc[i].use = ++clk; return &lc[i].im; }
+    for (int i = 0; i < 8; i++) if (lc[i].g == g && lc[i].im.px) { lc[i].use = ++lc_clk; return &lc[i].im; }
     int k = 0; for (int i = 1; i < 8; i++) if (lc[i].use < lc[k].use) k = i;
-    img_free(&lc[k].im); lc[k].g = g; lc[k].use = ++clk;
+    img_free(&lc[k].im); lc[k].g = g; lc[k].use = ++lc_clk;
     if (dsi_logo(g->title, 520, &lc[k].im)) return 0;
     return &lc[k].im;
 }
@@ -176,13 +179,15 @@ words:
                                   : "No resume point yet. RetroArch's own auto save state brings you back here.");
     }
 }
+static int stage_waits(void) {
+    return stage_g && sel_gap < 0.3 && T - sel_t < 0.18 && page == P_HOME && seq == Q_NONE; }
 void home_draw_top(Surf *s) {
     if (!stage.px) { surf_alloc(&stage, SW, SH); surf_alloc(&stage_old, SW, SH); }
     Game *g = cur_game();
     int fresh = g != stage_g || stage_tab != tab;
-    if (fresh && stage_g && sel_gap < 0.16 && T - sel_t < 0.09 && page == P_HOME && seq == Q_NONE) {
-        /* moving fast through the shelf: the stage waits until it stops (each step would cost a whole new stage) */
-        dirty(0);
+    if (fresh && stage_waits()) {
+        /* moving fast through the shelf: the stage waits until it stops (each step would cost a whole new stage);
+         * home_update asks for it when it may come */
     } else if (fresh && page == P_HOME && seq == Q_NONE && !(building && build_g == g && build_tab == tab)) {
         /* a new game: its stage made over two frames (the backdrop and cover, then the rest), the old one shown
          * meanwhile, so neither frame keeps the deck waiting; then the crossfade */
@@ -246,26 +251,58 @@ static float frame_shine(void) { float k = (float)(T - gloss_t) / 0.9f; return k
 /* the frame round the selected cartridge: its size for that cartridge */
 static void frame_size(const Game *g, float *w, float *h) { float cw, ch; cart_size(g, &cw, &ch); *w = cw + 76; *h = ch + 140; }
 
-void home_draw_bot(Surf *s, float yoff, int alpha) {
-    int Y = (int)yoff; (void)alpha;
-    Game *g = cur_game();
-    int n = shn[tab];
+/* the deck's still parts: the background, the tabs, the emblem, the buttons */
+static Surf chrome; static int chrome_ok; static uint64_t chrome_key;
+static void chrome_paint(Surf *s, int Y, Game *g, uint32_t tint, float amt, float par) {
     /* the background: the DSi's stripes and diamonds (cream with stars on the favourites), toward the game's colour */
-    float par = -sc.x * 44 - slide.x * 300;
     Surf b = *s;
     if (Y > 0) { surf_clip(&b, 0, Y, SW, SH - Y); }
-    if (pal.dark) dsi_bg_dark(&b, tint_c, tint_k.x, par);
-    else if (tab == SH_FAV) dsi_bg_favs(&b, tint_c, tint_k.x, par);
-    else dsi_bg_bottom(&b, tint_c, tint_k.x, par);
+    if (pal.dark) dsi_bg_dark(&b, tint, amt, par);
+    else if (tab == SH_FAV) dsi_bg_favs(&b, tint, amt, par);
+    else dsi_bg_bottom(&b, tint, amt, par);
     if (Y > 0) { rect_blend(s, 0, Y, SW, 6, 0xffffff, 120); }
     /* the shelves: the tabs hanging from the top edge (L on the first, R on the last) */
     for (int i = 0; i < SH_COUNT; i++) {
         int act = i == tab;
         dsi_tab(s, TABX(i), Y, TABW, i == 0 ? "L" : i == SH_COUNT - 1 ? "R" : 0, i == SH_COUNT - 1, TABS[i], i ? shn[i] : -1,
-                act, press_of(120 + i) + (act ? 0 : 0.0f), 255);
+                act, press_of(120 + i), 255);
     }
-    /* the emblem, pressed into the plastic, and the selected game's name under it */
-    dsi_emblem(s, tab == SH_FAV ? 2 : tab == SH_RECENT ? 3 : tab == SH_GBA ? 1 : 0, Y + EMB_Y, tint_c, 255);
+    /* the emblem, pressed into the plastic */
+    dsi_emblem(s, tab == SH_FAV ? 2 : tab == SH_RECENT ? 3 : tab == SH_GBA ? 1 : 0, Y + EMB_Y, tint, 255);
+    /* the sun (brightness) and the gear (settings), and the game's options */
+    float p0 = press_of(110), p1 = press_of(111);
+    dsi_round(s, 76, Y + BTN_Y, 44, p1, 255);
+    icon(s, IC_SUN, 76, Y + BTN_Y + p1 * 4 - 4, 42, 0xe8a010, 255);
+    for (int i = 0; i < 5; i++) hi_circle(s, 76 - 20 + i * 10.f, Y + BTN_Y + 26.f + p1 * 4, 3.5f, 0, i < bri_lv ? 0xe8a010 : 0xc8c8c8, 255);
+    dsi_round(s, SW - 76, Y + BTN_Y, 44, p0, 255);
+    icon(s, IC_GEAR, SW - 76, Y + BTN_Y + p0 * 4, 46, 0x7a7a7a, 255);
+    if (g) dsi_button(s, SW - 140 - 264, Y + BTN_Y - 34, 264, 68, "Options", "Y", 0, press_of(112), 255);
+    if (g) dsi_button(s, 140, Y + BTN_Y - 34, 264, 68, g->fav ? "Unstar" : "Favorite", "X", 0, press_of(114), 255);
+}
+void home_draw_bot(Surf *s, float yoff, int alpha) {
+    int Y = (int)yoff; (void)alpha;
+    Game *g = cur_game();
+    int n = shn[tab];
+    /* what doesn't move while the shelf does (the background, the tabs, the emblem, the buttons) drawn once and copied
+     * after, until something on it changes: a step along the shelf redraws only the cartridges and what's on them */
+    int steady = Y == 0 && fabsf(slide.x) < 0.003f && !spr_moving(&tab_k, .002f) && !scrub;
+    for (int i = 0; i < SH_COUNT && steady; i++) if (press_of(120 + i) > 0.01f) steady = 0;
+    if (steady && (press_of(110) > 0.01f || press_of(111) > 0.01f || press_of(112) > 0.01f || press_of(114) > 0.01f)) steady = 0;
+    uint32_t tq = (tint_c & 0xf0f0f0) | 0x080808; float tk = (int)(tint_k.x * 15 + 0.5f) / 15.f;
+    if (steady) {
+        uint64_t key = (uint64_t)tq | (uint64_t)(int)(tk * 15) << 24 | (uint64_t)tab << 29 | (uint64_t)pal.dark << 32 |
+                       (uint64_t)(g && g->fav) << 33 | (uint64_t)bri_lv << 34 | (uint64_t)(g != 0) << 38 | (uint64_t)cfg.color << 39 |
+                       (uint64_t)(shn[1] & 0x3ff) << 44 | (uint64_t)(shn[2] & 0x3ff) << 54;
+        key ^= (uint64_t)shn[3] * 0x9e3779b97f4a7c15ull;
+        if (!chrome.px) surf_alloc(&chrome, SW, SH);
+        if (chrome.px && (!chrome_ok || key != chrome_key)) {
+            surf_noclip(&chrome);
+            chrome_paint(&chrome, 0, g, tq, tk, 0);
+            chrome_key = key; chrome_ok = 1;
+        }
+        if (chrome.px) surf_copy(s, &chrome); else steady = 0;
+    }
+    if (!steady) chrome_paint(s, Y, g, tint_c, tint_k.x, -slide.x * 300);
     uint32_t tx = pal.dark ? 0xdfe3e8 : D_TEXT;
     if (g) {
         char t[160]; ht_fit(HF_MD, g->title, 800, t, sizeof t);
@@ -327,17 +364,6 @@ void home_draw_bot(Surf *s, float yoff, int alpha) {
                 dsi_star(s, cx + w / 2 - 6, cy - h / 2 + 4, z, D_STAR, a);
             }
         }
-    }
-    /* the sun (brightness) and the gear (settings), and the game's options */
-    {
-        float p0 = press_of(110), p1 = press_of(111);
-        dsi_round(s, 76, Y + BTN_Y, 44, p1, 255);
-        icon(s, IC_SUN, 76, Y + BTN_Y + p1 * 4 - 4, 42, 0xe8a010, 255);
-        for (int i = 0; i < 5; i++) hi_circle(s, 76 - 20 + i * 10.f, Y + BTN_Y + 26.f + p1 * 4, 3.5f, 0, i < bri_lv ? 0xe8a010 : 0xc8c8c8, 255);
-        dsi_round(s, SW - 76, Y + BTN_Y, 44, p0, 255);
-        icon(s, IC_GEAR, SW - 76, Y + BTN_Y + p0 * 4, 46, 0x7a7a7a, 255);
-        if (g) dsi_button(s, SW - 140 - 264, Y + BTN_Y - 34, 264, 68, "Options", "Y", 0, press_of(112), 255);
-        if (g) dsi_button(s, 140, Y + BTN_Y - 34, 264, 68, g->fav ? "Unstar" : "Favorite", "X", 0, press_of(114), 255);
     }
     /* the scroll bar along the bottom: a mark for each game, the favourites in gold */
     {
@@ -425,7 +451,9 @@ static void motion(float dt) {
     {
         Game *g = cur_game(); Art *A = g ? art_get(g) : 0;
         uint32_t want = A && A->state ? A->vivid : accent;
-        if (want != tint_c) {
+        /* (only once the shelf rests on a game: moving through a long shelf, each game's colour would be a new
+         * background to make every few frames) */
+        if (want != tint_c && T - sel_t > 0.2 && !spr_moving(&sc, .05f)) {
             float k = MIN(1.f, dt * 6);
             uint32_t n = h_mix(tint_c, want, k);
             if (n == tint_c) n = want;
@@ -470,6 +498,12 @@ static void prewarm(void) {
         Art *A = art_get(shelf[tab][i]);
         if (A && A->state != 0 && cart3d_prepare(shelf[tab][i])) return;
     }
+    /* then the neighbours' names as logos (each a few milliseconds to make) */
+    for (int d = 1; d <= 2; d++) for (int sg = -1; sg <= 1; sg += 2) {
+        int i = sel[tab] + sg * d;
+        if (i < 0 || i >= shn[tab]) continue;
+        if (!logo_cached(shelf[tab][i])) { logo_of(shelf[tab][i]); return; }
+    }
     /* then the covers the stage will want next (the neighbours'), so a step to them costs no resampling */
     for (int d = 0; d <= 2; d++) for (int sg = -1; sg <= 1; sg += 2) {
         int i = sel[tab] + sg * d;
@@ -489,6 +523,7 @@ static void prewarm(void) {
 void home_update(float dt) {
     if (dt < 0) { motion(-dt); return; }
     motion(dt);
+    if ((cur_game() != stage_g || stage_tab != tab || !stage_ok) && !stage_waits()) dirty(0);   /* (the stage that waited: now) */
     prewarm();
     focus_hide();
     int n = shn[tab];

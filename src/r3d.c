@@ -152,6 +152,7 @@ static inline uint32_t resolve(int x, int y) {
     int W = BW;
     if (SS <= 1) {
         uint32_t c = SS ? buf[(size_t)y * W + x] : buf[(size_t)(y >> 1) * W + (x >> 1)]; int a = (int)CA(c);
+        if (a == 255) return c;
         return a ? ARGB(a, CR(c) * 255 / a, CG(c) * 255 / a, CB(c) * 255 / a) : 0;
     }
     const uint32_t *p = &buf[(size_t)(y * SS) * W + x * SS];
@@ -164,7 +165,18 @@ static inline uint32_t resolve(int x, int y) {
 int r3d_end_img(Img *out, int *ox, int *oy) {
     if (!bw) return -1;
     if (img_alloc(out, bw, bh)) { bw = bh = 0; return -1; }
-    for (int y = 0; y < bh; y++) for (int x = 0; x < bw; x++) out->px[(size_t)y * bw + x] = resolve(x, y);
+    if (!SS) {
+        /* (a sample each 2x2 pixels: each resolved once, written four times) */
+        for (int y = 0; y < BH; y++) {
+            uint32_t *o0 = out->px + (size_t)(2 * y) * bw, *o1 = o0 + bw;
+            const uint32_t *b = buf + (size_t)y * BW;
+            for (int x = 0; x < BW; x++) {
+                uint32_t c = b[x]; int a = (int)CA(c);
+                if (a < 255) c = a ? ARGB(a, CR(c) * 255 / a, CG(c) * 255 / a, CB(c) * 255 / a) : 0;
+                o0[2 * x] = o0[2 * x + 1] = o1[2 * x] = o1[2 * x + 1] = c;
+            }
+        }
+    } else for (int y = 0; y < bh; y++) for (int x = 0; x < bw; x++) out->px[(size_t)y * bw + x] = resolve(x, y);
     *ox = bx0; *oy = by0;
     bw = bh = 0;
     return 0;

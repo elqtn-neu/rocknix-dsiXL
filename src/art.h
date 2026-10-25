@@ -18,7 +18,8 @@ void art_init(void);
 /* the art of a game: there (state 1), being loaded (state 0, NULL picture), or none (-1); asks for it */
 Art *art_get(Game *g);
 /* the main thread: takes what the loader finished; 1 when anything arrived */
-int art_step(void);
+/* the pictures loaded meanwhile taken in: 0 none, 1 some, 3 watch's among them */
+int art_step(const Game *watch);
 /* forget one game's picture (new art arrived for it): loaded again when it's drawn next */
 void art_forget(Game *g);
 /* forget everything (a rescan) */
