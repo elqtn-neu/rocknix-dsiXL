@@ -3,8 +3,10 @@
 #include "r3d.h"
 #include <stdlib.h>
 
-static int SS = 2;                      /* samples a pixel, each way (r3d_quality) */
-void r3d_quality(int ss) { SS = ss < 1 ? 1 : ss > 2 ? 2 : ss; }
+static int SS = 2;                      /* samples a pixel, each way (r3d_quality); 0: one sample every 2x2 pixels */
+static float SC = 2;                    /* the buffer's pixels per screen pixel, each way */
+static int BW, BH;                      /* the buffer's size */
+void r3d_quality(int ss) { SS = ss < 0 ? 0 : ss > 2 ? 2 : ss; SC = SS ? (float)SS : 0.5f; }
 
 static float cam_cx, cam_cy, cam_f;
 static Surf *target;
@@ -33,7 +35,8 @@ int r3d_begin(Surf *dst, int x0, int y0, int x1, int y1) {
     if (dst) { x0 = MAX(x0, dst->cx0); y0 = MAX(y0, dst->cy0); x1 = MIN(x1, dst->cx1); y1 = MIN(y1, dst->cy1); }
     target = dst; bx0 = x0; by0 = y0; bw = x1 - x0; bh = y1 - y0;
     if (bw <= 0 || bh <= 0) { bw = bh = 0; return -1; }
-    size_t need = (size_t)bw * bh * SS * SS;
+    if (!SS) { bw += bw & 1; bh += bh & 1; BW = bw / 2; BH = bh / 2; } else { BW = bw * SS; BH = bh * SS; }
+    size_t need = (size_t)BW * BH;
     if (need > buf_cap) { free(buf); buf = malloc(need * 4); buf_cap = buf ? need : 0; if (!buf) { bw = bh = 0; return -1; } }
     memset(buf, 0, need * 4);
     return 0;
@@ -62,57 +65,72 @@ typedef struct { float x, y, iw, uw, vw; } SV;     /* screen x, y (2x), 1/w, u/w
 static void raster_tri(const SV *a, const SV *b, const SV *c, const Mat *m) {
     float area = (b->x - a->x) * (c->y - a->y) - (c->x - a->x) * (b->y - a->y);
     if (fabsf(area) < 1e-4f) return;
-    int W = bw * SS, H = bh * SS;
+    int W = BW, H = BH;
     int x0 = MAX(0, (int)floorf(MIN(a->x, MIN(b->x, c->x)))), x1 = MIN(W - 1, (int)ceilf(MAX(a->x, MAX(b->x, c->x))));
     int y0 = MAX(0, (int)floorf(MIN(a->y, MIN(b->y, c->y)))), y1 = MIN(H - 1, (int)ceilf(MAX(a->y, MAX(b->y, c->y))));
     if (x0 > x1 || y0 > y1) return;
     float inv = 1.0f / area;
-    float shade = m->shade, spec = m->spec * 255, desat = m->desat;
-    int ds = (int)(desat * 256);
+    /* the barycentric weights are linear in x and y: stepped, not recomputed; each row walks only its span */
+    float A0 = (b->y - c->y) * inv, B0 = (c->x - b->x) * inv, A1 = (c->y - a->y) * inv, B1 = (a->x - c->x) * inv;
+    float A2 = -A0 - A1;
+    float px0 = x0 + 0.5f, py0 = y0 + 0.5f;
+    float W0 = ((b->x - px0) * (c->y - py0) - (c->x - px0) * (b->y - py0)) * inv;
+    float W1 = ((c->x - px0) * (a->y - py0) - (a->x - px0) * (c->y - py0)) * inv;
+    float diw = A0 * a->iw + A1 * b->iw + A2 * c->iw, duw = A0 * a->uw + A1 * b->uw + A2 * c->uw, dvw = A0 * a->vw + A1 * b->vw + A2 * c->vw;
+    float shade = m->shade, spec = m->spec * 255;
+    int ds = (int)(m->desat * 256), need_uv = m->tex || m->gloss > 0 || m->sheen > 0;
+    int sh8 = (int)(shade * 256);
     for (int y = y0; y <= y1; y++) {
-        float py = y + 0.5f;
-        for (int x = x0; x <= x1; x++) {
-            float px = x + 0.5f;
-            float w0 = ((b->x - px) * (c->y - py) - (c->x - px) * (b->y - py)) * inv;
-            float w1 = ((c->x - px) * (a->y - py) - (a->x - px) * (c->y - py)) * inv;
-            float w2 = 1 - w0 - w1;
-            /* a shared edge belongs to one side only (no seams, no double blending) */
-            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+        float dy = (float)(y - y0);
+        float e0 = W0 + B0 * dy, e1 = W1 + B1 * dy, e2 = 1 - e0 - e1;
+        /* the pixels k (from x0) where every weight is >= 0 */
+        float kmin = 0, kmax = (float)(x1 - x0);
+        const float E[3] = { e0, e1, e2 }, A[3] = { A0, A1, A2 };
+        int empty = 0;
+        for (int i = 0; i < 3; i++) {
+            if (A[i] > 1e-9f) kmin = MAX(kmin, -E[i] / A[i]);
+            else if (A[i] < -1e-9f) kmax = MIN(kmax, E[i] / -A[i]);
+            else if (E[i] < 0) empty = 1;
+        }
+        if (empty) continue;
+        int k0 = (int)ceilf(kmin - 1e-4f), k1 = (int)floorf(kmax + 1e-4f);
+        if (k0 > k1) continue;
+        float w0 = e0 + A0 * k0, w1 = e1 + A1 * k0, w2 = 1 - w0 - w1;
+        float iw = w0 * a->iw + w1 * b->iw + w2 * c->iw, uw = w0 * a->uw + w1 * b->uw + w2 * c->uw, vw = w0 * a->vw + w1 * b->vw + w2 * c->vw;
+        uint32_t *dp = &buf[(size_t)y * W + x0 + k0];
+        for (int k = k0; k <= k1; k++, dp++, iw += diw, uw += duw, vw += dvw) {
             uint32_t col;
             float u = 0, v = 0;
-            if (m->tex || m->gloss > 0 || m->sheen > 0) {
-                float iw = w0 * a->iw + w1 * b->iw + w2 * c->iw;
-                u = (w0 * a->uw + w1 * b->uw + w2 * c->uw) / iw;
-                v = (w0 * a->vw + w1 * b->vw + w2 * c->vw) / iw;
-            }
+            if (need_uv) { float r = 1.0f / iw; u = uw * r; v = vw * r; }
             if (m->tex) {
-                if (m->nearest) {
-                    const Img *t = m->tex;
-                    int tx = (int)(clampf(u, 0, 0.9999f) * t->w), ty = (int)(clampf(v, 0, 0.9999f) * t->h);
-                    col = t->px[(size_t)ty * t->w + tx];
-                } else col = tex_sample(m->tex, clampf(u, 0, 0.9999f), clampf(v, 0, 0.9999f));
+                const Img *t = m->tex;
+                float uc = u < 0 ? 0 : u > 0.9999f ? 0.9999f : u, vc = v < 0 ? 0 : v > 0.9999f ? 0.9999f : v;
+                if (m->nearest) col = t->px[(size_t)(int)(vc * t->h) * t->w + (int)(uc * t->w)];
+                else col = tex_sample(t, uc, vc);
                 if (CA(col) < 8) continue;
             } else col = m->color | 0xff000000u;
             if (ds) col = col_desat(col, ds);
-            float r = CR(col) * shade, g = CG(col) * shade, bl = CB(col) * shade, add = spec;
+            float add = spec;
             if (m->sheen > 0) add += m->sheen * 70 * (1 - v) * (1 - v);
-            float gd = (u + v * 0.55f) - m->gloss_pos;
-            if (m->gloss > 0 && gd > -0.45f && gd < 0.35f) {
-                /* a soft diagonal band of light sweeping across the face */
-                float d = gd;
-                float band = expf(-d * d * 90.0f) * 0.9f + expf(-(d + 0.09f) * (d + 0.09f) * 900.0f) * 0.5f;
-                add += band * m->gloss * 200;
+            if (m->gloss > 0) {
+                float gd = (u + v * 0.55f) - m->gloss_pos;
+                if (gd > -0.45f && gd < 0.35f) {
+                    /* a soft diagonal band of light sweeping across the face */
+                    float band = expf(-gd * gd * 90.0f) * 0.9f + expf(-(gd + 0.09f) * (gd + 0.09f) * 900.0f) * 0.5f;
+                    add += band * m->gloss * 200;
+                }
             }
-            r += add; g += add; bl += add;
+            int ad = (int)add;
+            int r = ((int)CR(col) * sh8 >> 8) + ad, g = ((int)CG(col) * sh8 >> 8) + ad, bl = ((int)CB(col) * sh8 >> 8) + ad;
+            if (r > 255) r = 255;
+            if (g > 255) g = 255;
+            if (bl > 255) bl = 255;
             int a8 = (int)CA(col);
-            uint32_t out = ARGB(255, (int)MIN(255, r) * a8 / 255, (int)MIN(255, g) * a8 / 255, (int)MIN(255, bl) * a8 / 255);
-            uint32_t *dp = &buf[(size_t)y * W + x];
-            if (a8 >= 250) *dp = out;
-            else {
-                /* premultiplied over */
-                uint32_t d = *dp; int ia = 255 - a8;
-                *dp = ARGB(MIN(255, a8 + (int)CA(d) * ia / 255), CR(out) + (int)CR(d) * ia / 255, CG(out) + (int)CG(d) * ia / 255, CB(out) + (int)CB(d) * ia / 255);
-            }
+            if (a8 >= 250) { *dp = ARGB(255, r, g, bl); continue; }
+            /* premultiplied over */
+            r = r * a8 / 255; g = g * a8 / 255; bl = bl * a8 / 255;
+            uint32_t d = *dp; int ia = 255 - a8;
+            *dp = ARGB(MIN(255, a8 + (int)CA(d) * ia / 255), r + (int)CR(d) * ia / 255, g + (int)CG(d) * ia / 255, bl + (int)CB(d) * ia / 255);
         }
     }
 }
@@ -122,8 +140,8 @@ void r3d_poly(const V3 *v, const float *uv, int n, const Mat *m) {
     SV s[16];
     for (int i = 0; i < n; i++) {
         float z = MAX(v[i].z, 1.0f), iw = 1.0f / z;
-        s[i].x = (cam_cx + cam_f * v[i].x * iw - bx0) * SS;
-        s[i].y = (cam_cy - cam_f * v[i].y * iw - by0) * SS;
+        s[i].x = (cam_cx + cam_f * v[i].x * iw - bx0) * SC;
+        s[i].y = (cam_cy - cam_f * v[i].y * iw - by0) * SC;
         s[i].iw = iw; s[i].uw = uv[i * 2] * iw; s[i].vw = uv[i * 2 + 1] * iw;
     }
     for (int i = 1; i + 1 < n; i++) raster_tri(&s[0], &s[i], &s[i + 1], m);
@@ -131,9 +149,9 @@ void r3d_poly(const V3 *v, const float *uv, int n, const Mat *m) {
 
 /* one pixel's samples averaged: premultiplied in, straight colour and coverage (0..255) out */
 static inline uint32_t resolve(int x, int y) {
-    int W = bw * SS;
-    if (SS == 1) {
-        uint32_t c = buf[(size_t)y * W + x]; int a = (int)CA(c);
+    int W = BW;
+    if (SS <= 1) {
+        uint32_t c = SS ? buf[(size_t)y * W + x] : buf[(size_t)(y >> 1) * W + (x >> 1)]; int a = (int)CA(c);
         return a ? ARGB(a, CR(c) * 255 / a, CG(c) * 255 / a, CB(c) * 255 / a) : 0;
     }
     const uint32_t *p = &buf[(size_t)(y * SS) * W + x * SS];

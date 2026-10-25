@@ -6,6 +6,7 @@
 // One that changes every frame (a cartridge in motion) is drawn with one sample a pixel: at this resolution its
 // edges are fine, and it's four times less work.
 #include "cart3d.h"
+#include "plat/plat.h"
 #include "r3d.h"
 #include "art.h"
 #include "hgfx.h"
@@ -240,7 +241,9 @@ static int render(Game *g, const CartPose *p, int ss, Img *out, int *ox, int *oy
         r3d_project(bk[i], &px, &py); minx = MIN(minx, px); maxx = MAX(maxx, px); miny = MIN(miny, py); maxy = MAX(maxy, py);
     }
     r3d_quality(ss);
-    if (r3d_begin(0, (int)floorf(minx) - 2, (int)floorf(miny) - 2, (int)ceilf(maxx) + 3, (int)ceilf(maxy) + 3)) return -1;
+    int bx = (int)floorf(minx) - 2, by = (int)floorf(miny) - 2;
+    if (!ss) { bx -= ((int)floorf(p->sx) + bx) & 1; by -= ((int)floorf(p->sy) + by) & 1; }   /* (its 2x2 blocks on the LCD's) */
+    if (r3d_begin(0, bx, by, (int)ceilf(maxx) + 3, (int)ceilf(maxy) + 3)) return -1;
     float spec;
     V3 ctr = v3(0, 0, z0);
     Mat mat; memset(&mat, 0, sizeof mat);
@@ -319,7 +322,8 @@ void cart3d_draw(Surf *s, Game *g, const CartPose *p) {
     int rest = cd->has_last && same_pose(&cd->last, p);
     cd->last = *p; cd->has_last = 1;
     Img im = { 0 }; int ox, oy;
-    if (render(g, p, rest ? 2 : 1, &im, &ox, &oy)) return;
+    /* (in motion on the DSi LCD look, which shows 2x2 pixels as one: a sample each 2x2, a quarter of the work) */
+    if (render(g, p, rest ? 2 : plat_lcd ? 0 : 1, &im, &ox, &oy)) return;
     hb_blit(s, &im, rx + ox, ry + oy, a);
     if (p->reflect > 0) reflect(s, &im, rx + ox, ry + oy, floor_y, p->reflect, a);
     if (rest) {

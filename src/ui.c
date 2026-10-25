@@ -940,6 +940,54 @@ static void write_launch(void) {
     snprintf(cfg.recent, sizeof cfg.recent, "%s", launch_g->file); cfg.recent_sys = launch_g->sys;
     state_save();
 }
+/* ---------------------------------------------------------------- sleep and wake
+ * The menu's Sleep turns the screens off like an old TV (in to a line, a dot, out); waking (the lid opened, or a
+ * button) unfolds them out of the hinge, a light along it first. */
+#define SL_LINE 0.22f
+#define SL_DOT  0.34f
+#define SL_END  0.46f
+#define WK_GLOW 0.12f
+#define WK_END  0.66f
+static uint32_t *sq_buf;
+/* the screen's picture squeezed into rows [d0, d0 + dh) (black around it), mixed toward white by w, dimmed by dark */
+static void squeeze(Surf *s, float d0, float dh, float w, float dark) {
+    if (!sq_buf && !(sq_buf = malloc((size_t)SW * SH * 4))) return;
+    for (int y = 0; y < SH; y++) memcpy(sq_buf + (size_t)y * SW, s->px + (size_t)y * s->pitch, SW * 4);
+    int wi = (int)(sat(w) * 256), mi = (int)((1 - sat(dark)) * 256);
+    for (int y = 0; y < SH; y++) {
+        uint32_t *o = s->px + (size_t)y * s->pitch;
+        if (dh < 0.5f || y + 1 <= d0 || y >= d0 + dh) { memset(o, 0, SW * 4); continue; }
+        int sy = CLAMP((int)((y + 0.5f - d0) * SH / dh), 0, SH - 1);
+        const uint32_t *r = sq_buf + (size_t)sy * SW;
+        if (!wi && mi == 256) { memcpy(o, r, SW * 4); continue; }
+        for (int x = 0; x < SW; x++) {
+            uint32_t c = r[x]; int R = c >> 16 & 255, G = c >> 8 & 255, B = c & 255;
+            R += (255 - R) * wi >> 8; G += (255 - G) * wi >> 8; B += (255 - B) * wi >> 8;
+            o[x] = (uint32_t)(R * mi >> 8) << 16 | (uint32_t)(G * mi >> 8) << 8 | (uint32_t)(B * mi >> 8);
+        }
+    }
+}
+/* the old TV's line across the middle (half_w each side, with its glow), or its last dot */
+static void tv_line(Surf *s, float half_w, int a) {
+    fill(s, 0x000000);
+    int cy = SH / 2;
+    if (half_w >= 3) {
+        rect_blend(s, (int)(SW / 2 - half_w * 0.85f), cy - 14, (int)(half_w * 1.7f), 28, 0xc8e0ff, a / 8);
+        rect_blend(s, (int)(SW / 2 - half_w * 0.92f), cy - 6, (int)(half_w * 1.84f), 12, 0xe0f0ff, a / 4);
+        rect_blend(s, (int)(SW / 2 - half_w), cy - 3, (int)(half_w * 2), 6, 0xffffff, a);
+    } else {
+        h_glow(s, SW / 2.f, (float)cy, 40, 0xc8e0ff, a / 3);
+        hi_circle(s, SW / 2.f, (float)cy, 7 + half_w * 2, 0, 0xffffff, a);
+    }
+}
+/* the hinge's light: along the top screen's bottom edge and the bottom screen's top edge */
+static void hinge_glow(Surf *top, Surf *bot, int a) {
+    for (int j = 0; j < 40; j++) {
+        float f = 1 - j / 40.f; int aa = (int)(a * f * f * f);
+        rect_blend(top, 0, SH - 1 - j, SW, 1, 0xfff6e0, aa);
+        rect_blend(bot, 0, j, SW, 1, 0xfff6e0, aa);
+    }
+}
 static void seq_draw(Surf *top, Surf *bot) {
     cover_fast = 1;
     float t = (float)seq_t;
@@ -948,34 +996,31 @@ static void seq_draw(Surf *top, Surf *bot) {
     if (seq == Q_LAUNCH && g) launch_draw(top, bot, g, t);
     if (seq == Q_RETURN && g) return_draw(top, bot, g, t);
     if (seq == Q_SLEEP || seq == Q_ASLEEP) {
-        /* good night: the screens dim, a moon rises in a soft light, then it too goes out */
-        float k = smoothstep(0, 0.45f, t), m = ease_out_back(sat((t - 0.12f) / 0.55f)), out = smoothstep(0.95f, 1.5f, t);
-        rect_blend(top, 0, 0, SW, SH, 0x05060a, (int)(240 * k));
-        rect_blend(bot, 0, 0, SW, SH, 0x05060a, (int)(240 * k));
-        float my = lerpf(SH / 2.f + 70, SH / 2.f - 30, m);
-        int ma = (int)(255 * sat(m) * (1 - out));
-        h_glow(top, SW / 2.f, my, 230, 0x6C63D9, ma * 2 / 5);
-        icon(top, IC_MOON, SW / 2.f, my, 160, 0xF5E7A8, ma);
-        ht_center(top, HF_TITLE, SW / 2, (int)my + 120, 0xC9CCE0, ma * 4 / 5, 2, "Good night");
-        if (out > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * out)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * out)); }
-        if (seq == Q_ASLEEP) { fill(top, 0); fill(bot, 0); }
+        /* good night, as an old TV turns off: the picture flattens into a bright line, the line into a dot, out */
+        if (seq == Q_ASLEEP || t >= SL_END) { fill(top, 0); fill(bot, 0); }
+        else if (t < SL_LINE) {
+            float e = ease_in_cubic(t / SL_LINE), h = MAX(4.0f, SH * (1 - e));
+            squeeze(top, SH / 2.f - h / 2, h, e * 0.85f, 0); squeeze(bot, SH / 2.f - h / 2, h, e * 0.85f, 0);
+        } else if (t < SL_DOT) {
+            float w = SW / 2.f * (1 - ease_in_cubic((t - SL_LINE) / (SL_DOT - SL_LINE)));
+            tv_line(top, w, 255); tv_line(bot, w, 255);
+        } else {
+            float k = sat((t - SL_DOT) / (SL_END - SL_DOT));
+            tv_line(top, 0, (int)(255 * (1 - k))); tv_line(bot, 0, (int)(255 * (1 - k)));
+        }
     }
     cover_fast = 0;
     if (seq == Q_WAKE) {
-        /* good morning: light from the hinge, the screens come up out of it */
-        float k = 1 - ease_out_cubic(sat(t / 0.65f));
-        float gl = sinf(sat(t / 0.75f) * PI_F);
-        if (k > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * k)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * k)); }
-        if (gl > 0.01f) {
-            /* (a band of light along the hinge, row by row: the cheap way to a soft glow this wide) */
-            for (int j = 0; j < 300; j++) {
-                float f = 1 - j / 300.f; int a = (int)(120 * gl * f * f);
-                if (a <= 0) break;
-                rect_blend(top, 0, SH - 1 - j, SW, 1, 0xfff4d8, a);
-                rect_blend(bot, 0, j, SW, 1, 0xfff4d8, a);
-            }
+        /* good morning, as the lid opens: light at the hinge, the screens unfold out of it */
+        if (t < WK_GLOW) { fill(top, 0); fill(bot, 0); hinge_glow(top, bot, (int)(230 * ease_out_cubic(t / WK_GLOW))); }
+        else if (t < WK_END) {
+            float k = (t - WK_GLOW) / (WK_END - WK_GLOW), h = MIN((float)SH, SH * ease_out_back(k));
+            float dk = 0.55f * (1 - ease_out_cubic(k));
+            squeeze(top, SH - h, h, 0, dk); squeeze(bot, 0, h, 0, dk);
+            hinge_glow(top, bot, (int)(230 * (1 - ease_out_cubic(k))));
         }
     }
+    (void)A;
 }
 static void start_sleep(void) {
     if (seq != Q_NONE) return;
@@ -1011,7 +1056,7 @@ static void seq_update(float dt) {
         if (t > R_END) { seq = Q_NONE; launch_g = 0; if (cfg.music) music_play(); }
         break;
     case Q_SLEEP:
-        if (t > 1.55f) {
+        if (t > SL_END + 0.1f) {
             seq = Q_ASLEEP; seq_t = 0;
             if (sleepkey_tap()) power_screens(0);     /* no uinput: dark at least, until a button */
         }
@@ -1021,31 +1066,39 @@ static void seq_update(float dt) {
          * after all: then any button */
         if (t > 3 && ((in.held & ~pin.held) || tch_up)) { power_screens(1); start_wake(); }
         break;
-    case Q_WAKE: if (t > 0.8f) seq = Q_NONE; break;
+    case Q_WAKE: if (t > WK_END) seq = Q_NONE; break;
     }
 }
 
-/* the start-up: both screens come up out of black; the name pops in on the stage with the chime, then lifts away
- * and the menu is there */
+/* the start-up, as the DSi's: both screens come up white out of black; the name pops in on the top one, outlined like
+ * a game's, with the chime and a few sparkles; then the white lifts and the menu is there */
+static Img boot_logo; static int boot_logo_ok;
 static void boot_draw(Surf *top, Surf *bot) {
     float t = (float)seq_t;
-    float out = smoothstep(1.05f, 1.5f, t);
-    rect_blend(top, 0, 0, SW, SH, pal.bg, (int)(255 * (1 - out)));
-    rect_blend(bot, 0, 0, SW, SH, pal.bg, (int)(255 * (1 - out)));
-    float s = ease_out_back(sat((t - 0.15f) / 0.45f));
-    int a = (int)(255 * sat((t - 0.15f) / 0.2f) * (1 - out));
-    int y = SH / 2 - 40 - (int)(out * 60);
-    /* the mark: two screens and the hinge */
-    int mw = (int)(132 * s), mh = (int)(96 * s);
-    if (mw > 4 && a > 0) {
-        hr_fill(top, SW / 2 - mw / 2, y - 2 * mh - 34, mw, mh, MAX(2, (int)(18 * s)), accent_ink, a);
-        hr_fill(top, SW / 2 - mw / 2, y - mh - 22, mw, mh, MAX(2, (int)(18 * s)), h_mix(accent, 0xffffff, 0.35f), a);
+    float in = smoothstep(0, 0.22f, t), out = smoothstep(1.1f, 1.55f, t);
+    int wa = (int)(255 * (1 - out));
+    if (wa > 0) { rect_blend(top, 0, 0, SW, SH, 0xfbfbfb, wa); rect_blend(bot, 0, 0, SW, SH, 0xfbfbfb, wa); }
+    if (!boot_logo_ok) boot_logo_ok = dsi_logo("DSi Menu", SW - 200, &boot_logo) == 0 ? 1 : -1;
+    float pop = ease_out_back(sat((t - 0.18f) / 0.42f));
+    int a = (int)(255 * sat((t - 0.18f) / 0.12f) * (1 - out));
+    float cy = SH / 2.f - 40 - out * 80;
+    if (boot_logo_ok == 1 && a > 0 && pop > 0.02f) {
+        float sc = 1.8f * pop, w = boot_logo.w * sc, h = boot_logo.h * sc;
+        blit_scaled(top, &boot_logo, SW / 2.f - w / 2, cy - h / 2, w, h, a, 1);
     }
-    ht_center(top, HF_HUGE, SW / 2, y + 10, pal.text, a, -1, "DSi Menu");
-    ht_center(top, HF_CAPS, SW / 2, y + 120, pal.sub, a * 3 / 4, 6, "FOR THE RG DS PLUS");
-    /* the deck: a hint of the cartridges sliding up */
-    float b = 1 - smoothstep(0, 0.4f, t);
-    if (b > 0) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * b)); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * b)); }
+    ht_center(top, HF_XS, SW / 2, (int)cy + 120, D_TEXT_SOFT, (int)(a * sat((t - 0.45f) / 0.2f)), 6, "FOR THE ANBERNIC RG DS PLUS");
+    /* sparkles round the name, one after another */
+    static const float SP[][3] = { { -400, -80, 0.42f }, { 380, -100, 0.52f }, { 420, 50, 0.62f }, { -360, 70, 0.70f }, { 60, -140, 0.78f } };
+    for (int i = 0; i < 5; i++) {
+        float k = (t - SP[i][2]) / 0.38f;
+        if (k <= 0 || k >= 1) continue;
+        float sz = 30 * sinf(k * PI_F);
+        dsi_sparkle(top, SW / 2.f + SP[i][0], cy + SP[i][1], sz, i & 1 ? 0xffd860 : 0x9ad8ff, (int)(255 * (1 - out)));
+    }
+    /* the bottom screen: the two-screen emblem settling in */
+    float e = ease_out_cubic(sat((t - 0.3f) / 0.4f));
+    dsi_emblem(bot, 0, SH / 2 + (int)((1 - e) * 40) - (int)(out * 60), accent, (int)(255 * e * (1 - out)));
+    if (in < 1) { rect_blend(top, 0, 0, SW, SH, 0, (int)(255 * (1 - in))); rect_blend(bot, 0, 0, SW, SH, 0, (int)(255 * (1 - in))); }
 }
 
 /* ---------------------------------------------------------------- start, and the frame */

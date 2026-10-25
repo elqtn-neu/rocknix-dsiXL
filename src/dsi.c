@@ -48,21 +48,47 @@ static void make_bg(Surf *s, int kind, uint32_t tint, float amt) {
             pc = 0xd8b45a; pa = 44; break;
     default: a = h_mix(0x1a1d22, tint, amt * 0.12f); b = h_mix(0x20242a, tint, amt * 0.12f); pc = h_mix(0x3a414b, tint, 0.2f); pa = 60; break;
     }
+    /* the pattern's tile (it repeats every PER each way), made once: how much of each pixel is the pattern's colour
+     * (k1) and how much white (k2), the rest the stripe under it. Blending is linear, so two drawings of it, the
+     * pattern black and then white on black, give both; then a new colour costs one pass, no drawing */
+    static uint8_t k1t[2][PER * PER], k2t[2][PER * PER]; static int made[2];
+    int pk = kind == 2, ia = pa;
+    if (!made[pk]) {
+        Surf t; surf_alloc(&t, 3 * PER, 3 * PER);
+        if (!t.px) return;
+        for (int pass = 0; pass < 2; pass++) {
+            fill(&t, 0);
+            for (int cy = -PER; cy < 4 * PER; cy += PER / 2) {
+                int row = ((cy + 4 * PER) / (PER / 2)) & 1;
+                for (int cx = -PER; cx < 4 * PER; cx += PER) {
+                    float x = cx + row * PER / 2 + PER / 4, y = cy + PER / 4;
+                    if (pk) dsi_star(&t, x, y, 15, pass ? 0xffffff : 0, 255);
+                    else diamond(&t, x, y, pass ? 0xffffff : 0, 255);
+                }
+            }
+            for (int y = 0; y < PER; y++) for (int x = 0; x < PER; x++) {
+                int v = (int)(t.px[(size_t)(y + PER) * t.pitch + x + PER] >> 8 & 255);
+                if (pass) k1t[pk][y * PER + x] = (uint8_t)MAX(0, v - k2t[pk][y * PER + x]);
+                else k2t[pk][y * PER + x] = (uint8_t)v;
+            }
+        }
+        surf_free(&t); made[pk] = 1;
+    }
     for (int y = 0; y < s->h; y++) {
         uint32_t c = (y / K) & 1 ? b : a, *r = s->px + (size_t)y * s->pitch;
-        for (int x = 0; x < s->w; x++) r[x] = c;
-    }
-    for (int cy = -PER; cy < s->h + PER; cy += PER / 2) {
-        int row = ((cy + 4 * PER) / (PER / 2)) & 1;
-        for (int cx = -PER; cx < s->w + PER; cx += PER) {
-            float x = cx + row * PER / 2 + PER / 4, y = cy + PER / 4;
-            if (kind == 2) dsi_star(s, x, y, 15, pc, pa);
-            else diamond(s, x, y, pc, pa);
+        const uint8_t *m1 = k1t[pk] + (y % PER) * PER, *m2 = k2t[pk] + (y % PER) * PER;
+        int cr = c >> 16 & 255, cg = c >> 8 & 255, cb = c & 255, pr = pc >> 16 & 255, pg = pc >> 8 & 255, pb = pc & 255;
+        for (int x = 0; x < s->w; x++) {
+            int j = x % PER, w1 = m1[j] * ia / 255, w2 = m2[j] * ia / 255;
+            if (!(w1 | w2)) { r[x] = c; continue; }
+            int w0 = 255 - w1 - w2;
+            r[x] = (uint32_t)((cr * w0 + pr * w1 + 255 * w2) / 255) << 16 | (uint32_t)((cg * w0 + pg * w1 + 255 * w2) / 255) << 8 | (uint32_t)((cb * w0 + pb * w1 + 255 * w2) / 255);
         }
     }
 }
 static void bg(Surf *s, int kind, uint32_t tint, float amt, float par) {
-    uint32_t key = kind == 0 ? 0 : (tint & 0xf8f8f8) ^ ((uint32_t)(amt * 31) << 24);
+    /* (the tint in coarse steps: a colour easing from one game's to the next's makes a few pictures, not one a frame) */
+    uint32_t key = kind == 0 ? 0 : (tint & 0xf0f0f0) ^ ((uint32_t)(amt * 15 + 0.5f) << 24);
     Bg *b = 0;
     for (int i = 0; i < 6; i++) if (bgs[i].s.px && bgs[i].kind == kind && bgs[i].key == key) b = &bgs[i];
     if (!b) {
@@ -70,7 +96,7 @@ static void bg(Surf *s, int kind, uint32_t tint, float amt, float par) {
         if (!b->s.px) surf_alloc(&b->s, W + PER, H);
         if (!b->s.px) { fill(s, 0xf2f2f2); return; }
         b->kind = kind; b->key = key;
-        make_bg(&b->s, kind, tint, amt);
+        make_bg(&b->s, kind, (tint & 0xf0f0f0) | 0x080808, (int)(amt * 15 + 0.5f) / 15.f);
     }
     int off = ((int)floorf(par) % PER + PER) % PER;
     int x0 = MAX(s->cx0, 0), x1 = MIN(s->cx1, W), y1 = MIN(s->cy1, H);
@@ -342,30 +368,38 @@ void dsi_emblem(Surf *s, int sys, int cy, uint32_t tint, int alpha) {
 int dsi_logo(const char *name, int max_w, Img *out) {
     /* the words, wrapped (two lines at most), as a coverage mask; then an outline round it, the fill a light
      * gradient, a soft shadow below: the DSi's top-screen title */
-    int lh = ht_h(HF_LOGO), pad = 20;
-    char l1[160], l2[160]; l1[0] = l2[0] = 0;
-    {   /* the break nearest the middle that fits */
-        snprintf(l1, sizeof l1, "%s", name);
-        if (ht_w(HF_LOGO, name, 0) > max_w) {
-            int n = (int)strlen(name), best = -1, bd = 1 << 30;
-            for (int i = 1; i < n; i++) if (name[i] == ' ') {
-                char a[160], b[160]; snprintf(a, sizeof a, "%.*s", i, name); snprintf(b, sizeof b, "%s", name + i + 1);
-                int wa = ht_w(HF_LOGO, a, 0), wb = ht_w(HF_LOGO, b, 0), d = abs(wa - wb) + (MAX(wa, wb) > max_w ? 100000 : 0);
-                if (d < bd) { bd = d; best = i; }
+    int pad = 20;
+    /* the words wrapped: the logo's size in two lines at most; else a size smaller in three; else cut short */
+    char L[3][160]; int lines = 0, F = HF_LOGO;
+    for (int pass = 0; pass < 3; pass++) {
+        F = pass == 0 ? HF_LOGO : HF_LG;
+        int maxl = pass == 0 ? 2 : 3, ok = 1;
+        const char *p = name; lines = 0;
+        while (*p && ok) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+            if (lines == maxl) { ok = 0; break; }
+            /* the most words that fit on this line */
+            int n = (int)strlen(p), best = 0;
+            for (int i = 1; i <= n; i++) if (i == n || p[i] == ' ') {
+                char t[160]; snprintf(t, sizeof t, "%.*s", i, p);
+                if (ht_w(F, t, 0) <= max_w) best = i; else break;
             }
-            if (best > 0) { snprintf(l1, sizeof l1, "%.*s", best, name); snprintf(l2, sizeof l2, "%s", name + best + 1); }
-            char f[160]; ht_fit(HF_LOGO, l1, max_w, f, sizeof f); snprintf(l1, sizeof l1, "%s", f);
-            ht_fit(HF_LOGO, l2, max_w, f, sizeof f); snprintf(l2, sizeof l2, "%s", f);
+            if (!best) { if (pass < 2) { ok = 0; break; } best = n; for (int i = 1; i < n; i++) if (p[i] == ' ') { best = i; break; } }
+            snprintf(L[lines++], sizeof L[0], "%.*s", best, p);
+            p += best;
         }
+        if (ok && !*p) break;
+        if (pass == 2) for (int i = 0; i < lines; i++) { char f[160]; ht_fit(F, L[i], max_w, f, sizeof f); snprintf(L[i], sizeof L[i], "%s", f); }
     }
-    int lines = l2[0] ? 2 : 1, step = lh - 6;
-    int tw = MAX(ht_w(HF_LOGO, l1, 0), l2[0] ? ht_w(HF_LOGO, l2, 0) : 0);
+    if (!lines) { snprintf(L[0], sizeof L[0], " "); lines = 1; }
+    int lh = ht_h(F), step = lh - 6, tw = 0;
+    for (int i = 0; i < lines; i++) tw = MAX(tw, ht_w(F, L[i], 0));
     int mw = tw + 2 * pad, mh = step * (lines - 1) + lh + 2 * pad;
     Surf m; surf_alloc(&m, mw, mh);
     if (!m.px) return -1;
     fill(&m, 0);
-    ht_center(&m, HF_LOGO, mw / 2, pad, 0xffffff, 255, 0, l1);
-    if (lines == 2) ht_center(&m, HF_LOGO, mw / 2, pad + step, 0xffffff, 255, 0, l2);
+    for (int i = 0; i < lines; i++) ht_center(&m, F, mw / 2, pad + step * i, 0xffffff, 255, 0, L[i]);
     /* the outline: the mask grown by a disc of 7 */
     uint8_t *cov = malloc((size_t)mw * mh), *ol = malloc((size_t)mw * mh);
     if (!cov || !ol) { free(cov); free(ol); surf_free(&m); return -1; }
