@@ -12,9 +12,29 @@ up() { read u _ < /proc/uptime; echo "[$u]"; }
 export DSIXL_HOME=$D DSIXL_PLATFORM=banana DSIXL_NO_GRAB=1
 export DSIXL_TOP=${BANANA_TOP:-DSI-2}
 [ -n "$BANANA_TOUCH" ] && export DSIXL_TOUCH_BOTTOM=$BANANA_TOUCH
+# Settings > Handheld > Start in DSi Menu: BananaOS's menu starts the game banana/resume-boot names once, as it starts
+# (its "power off after sleeping" resume); this names the DSi Menu, so the handheld comes up in it. Written as the
+# menu starts and again as it ends (banana-ui takes the file away each time it reads it)
+boot_marker() {
+  if [ -e $D/data/no-autostart ]; then rm -f /data/banana/resume-boot
+  else printf 'rom=%s\nemulator=\n' "$D/shelf/DSi Menu.app" > /data/banana/resume-boot; fi
+  sync
+}
+# Settings > Nintendo DS > Screens at start: SuperDrastic remembers F + SELECT's swap for each game (and DraStic its
+# own screen_swap); "top" starts every game with the DS's top screen on top
+screens_reset() {
+  [ "$(sed -n 's/^ *ds_screens *= *//p' $D/data/launch.conf 2>/dev/null | tail -n1)" = remember ] && return
+  C=/data/drastic/config
+  [ -f $C/drastic.cfg ] && grep -q '^screen_swap = 1' $C/drastic.cfg && sed -i 's/^screen_swap = .*/screen_swap = 0/' $C/drastic.cfg
+  if [ -f $C/superdrastic-swapped.txt ] && grep -qxF "$1" $C/superdrastic-swapped.txt; then
+    grep -vxF "$1" $C/superdrastic-swapped.txt > $C/superdrastic-swapped.txt.new; mv -f $C/superdrastic-swapped.txt.new $C/superdrastic-swapped.txt
+    echo "$(up) $1: screens back as the DS has them"
+  fi
+}
 {
   echo "$(up) $(date) session start"
   banana-perf ui                        # (the menu draws on the CPU in a few ms: BananaOS's menu clocks)
+  boot_marker
   RET_SYS= RET_FILE= ARGS=
   fails=0
   while :; do
@@ -50,7 +70,7 @@ export DSIXL_TOP=${BANANA_TOP:-DSI-2}
         G0=$(cut -d' ' -f1 /proc/uptime)
         export BANANA_ROM="$ROM"
         case $SYS in
-          NDS) export BANANA_SYSTEM=nds; banana-perf superdrastic; /usr/libexec/banana/run-nds "$ROM" ;;
+          NDS) export BANANA_SYSTEM=nds; banana-perf superdrastic; screens_reset "$B"; /usr/libexec/banana/run-nds "$ROM" ;;
           *)   export BANANA_SYSTEM=gba; banana-perf balanced
                CORE=$(sed -n 's/^ *core\.gba *= *//p' /data/banana/settings.conf 2>/dev/null | tail -n1)
                /usr/libexec/banana/run-retroarch "${CORE:-gpsp}" "$ROM" ;;
@@ -65,9 +85,9 @@ export DSIXL_TOP=${BANANA_TOP:-DSI-2}
         printf '%s\t%s\t%s\t%s\n' "$SYS" "$FILE" "$(awk -v a="$G0" -v b="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { printf "%d", b - a }')" "$(date +%s)" >> $D/data/plays.log
         ARGS= RET_SYS=$SYS RET_FILE=$FILE
         ;;
-      20) echo "$(up) back to BananaOS"; break ;;
-      21) echo "$(up) power off"; $D/brightness.sh apply; poweroff; exit 0 ;;
-      22) echo "$(up) reboot"; $D/brightness.sh apply; reboot; exit 0 ;;
+      20) echo "$(up) back to BananaOS"; boot_marker; break ;;
+      21) echo "$(up) power off"; boot_marker; $D/brightness.sh apply; poweroff; exit 0 ;;
+      22) echo "$(up) reboot"; boot_marker; $D/brightness.sh apply; reboot; exit 0 ;;
       0|143) fails=0; ARGS="--no-boot" RET_FILE= ;;
       *)
         # a crash, or no display (3): once more, then back to BananaOS rather than black screens

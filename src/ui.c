@@ -1570,7 +1570,7 @@ static void opt_act_more(int i) {
  * Left / right (or a tap on the value) changes the highlighted one at once and keeps it; the top screen says what it
  * does and what the choice means. B, SELECT or START (or Back) closes it. */
 enum { SR_HDR, SR_EMU, SR_LCD, SR_BRI, SR_COLOR, SR_SFX, SR_MUSIC, SR_RUMBLE, SR_SORT, SR_HIDDEN, SR_ART, SR_CLOCK,
-       SR_WIFI, SR_TZ, SR_CONTROLS, SR_REC, SR_ABOUT };
+       SR_WIFI, SR_TZ, SR_CONTROLS, SR_REC, SR_ABOUT, SR_AUTOSTART };
 typedef struct { int kind, sys, opt; const char *label, *help; } SRow;
 static SRow srow[48]; static int sn, ssel = 1;
 static int s_choice[SYS_COUNT][GOPT_MAX];
@@ -1610,6 +1610,7 @@ static void s_build(void) {
     for (int i = 0; i < s_nopts[SYS_GBA]; i++) s_add(SR_EMU, SYS_GBA, i, s_opts[SYS_GBA][i].label, 0);
     s_add(SR_REC, SYS_GBA, 0, "Recommended", "Every GBA setting back to the recommended choices (the ones with a star).");
     s_add(SR_HDR, 0, 0, "HANDHELD", 0);
+    if (cfg.banana) s_add(SR_AUTOSTART, 0, 0, "Start in DSi Menu", "Turning the handheld on opens the DSi Menu, not BananaOS's menu. Exit to BananaOS is in START.");
     s_add(SR_CLOCK, 0, 0, "Clock", "24-hour or 12-hour time.");
     if (!cfg.banana) {
         s_add(SR_WIFI, 0, 0, "Wi-Fi", "Join a network: for box art and updates.");
@@ -1624,6 +1625,27 @@ static int s_view_h(void) { return 192 - S_TOP; }
 static const char *s_section(int i) { while (i > 0 && srow[i].kind != SR_HDR) i--; return srow[i].label; }
 static int s_is_action(int k) { return k == SR_ART || k == SR_WIFI || k == SR_TZ || k == SR_CONTROLS || k == SR_REC; }
 
+/* Start in DSi Menu (BananaOS): its session names the menu in banana/resume-boot, which BananaOS's menu starts as it
+ * starts; data/no-autostart turns that off (session.sh) */
+static void autostart_path(char *b, int n, const char *f) {
+    const char *h = getenv("DSIXL_HOME"); snprintf(b, (size_t)n, "%s/data/%s", h && *h ? h : "/data/dsixl", f);
+}
+static int autostart_on(void) { char p[400]; autostart_path(p, sizeof p, "no-autostart"); return access(p, F_OK) != 0; }
+static void autostart_set(int on) {
+    char p[400]; autostart_path(p, sizeof p, "no-autostart");
+    const char *d = getenv("DSIXL_DATA"); char rb[400]; snprintf(rb, sizeof rb, "%s/banana/resume-boot", d && *d ? d : "/data");
+    if (on) {
+        unlink(p);
+        const char *h = getenv("DSIXL_HOME");
+        FILE *f = fopen(rb, "w"); if (f) { fprintf(f, "rom=%s/shelf/DSi Menu.app\nemulator=\n", h && *h ? h : "/data/dsixl"); fclose(f); }
+    } else {
+        FILE *f = fopen(p, "w"); if (f) fclose(f);
+        FILE *r = fopen(rb, "r"); char ln[512] = "";
+        if (r) { if (!fgets(ln, sizeof ln, r)) ln[0] = 0; fclose(r); }
+        if (strstr(ln, "/shelf/DSi Menu.app")) unlink(rb);
+    }
+    sync();
+}
 static void s_value(const SRow *r, char *b, int n) {
     switch (r->kind) {
     case SR_EMU: snprintf(b, (size_t)n, "%s", s_opts[r->sys][r->opt].names[s_choice[r->sys][r->opt]]); break;
@@ -1632,6 +1654,7 @@ static void s_value(const SRow *r, char *b, int n) {
     case SR_SORT: snprintf(b, (size_t)n, "%s", cfg.sort == 1 ? "Recently played" : cfg.sort == 2 ? "Most played" : "By name"); break;
     case SR_HIDDEN: snprintf(b, (size_t)n, "%s (%d)", cfg.show_hidden ? "Shown" : "Left out", library_hidden_count()); break;
     case SR_CLOCK: snprintf(b, (size_t)n, "%s", cfg.clock24 ? "24-hour" : "12-hour"); break;
+    case SR_AUTOSTART: snprintf(b, (size_t)n, "%s", autostart_on() ? "On" : "Off"); break;
     case SR_ART:
         if (job_running(&artjob) && art_total) snprintf(b, (size_t)n, "%d of %d", art_done, art_total);
         else if (job_running(&artjob)) snprintf(b, (size_t)n, "%s", art_short[0] ? art_short : "Starting");
@@ -1673,6 +1696,7 @@ static int s_step(int i, int dir) {
     case SR_SORT: cfg.sort = (cfg.sort + dir + 3) % 3; state_save(); order_rebuild(); sel_t = T; reorder_t = T; return 1;
     case SR_HIDDEN: cfg.show_hidden = !cfg.show_hidden; state_save(); order_rebuild(); fav_rebuild(); reorder_t = T; return 1;
     case SR_CLOCK: cfg.clock24 = !cfg.clock24; config_save(); return 1;
+    case SR_AUTOSTART: autostart_set(!autostart_on()); return 1;
     default: return 0;
     }
 }
@@ -1798,7 +1822,7 @@ static void gs_touch(int phase, int x, int y) {
         if (lv != bri_lv) s_change(i, lv - bri_lv);
         return;
     }
-    if (r->kind == SR_SFX || r->kind == SR_MUSIC || r->kind == SR_RUMBLE || r->kind == SR_CLOCK || r->kind == SR_HIDDEN) {
+    if (r->kind == SR_SFX || r->kind == SR_MUSIC || r->kind == SR_RUMBLE || r->kind == SR_CLOCK || r->kind == SR_HIDDEN || r->kind == SR_AUTOSTART) {
         s_change(i, 1); return;
     }
     s_change(i, x < S_VX0 ? 1 : s_press_side);
@@ -1860,9 +1884,9 @@ static void draw_game_settings(Surf *bot, Surf *top, float k) {
                 if (j < bri_lv) rrect_vgrad(&L, bx + 1, my + 6 - bh, 7, bh - 2, 1.5f, ac.light, ac.base, a);
                 else rrect(&L, bx + 1, my + 6 - bh, 7, bh - 2, 1.5f, 0xececec, a);
             }
-        } else if (r->kind == SR_SFX || r->kind == SR_MUSIC || r->kind == SR_RUMBLE) {
+        } else if (r->kind == SR_SFX || r->kind == SR_MUSIC || r->kind == SR_RUMBLE || r->kind == SR_AUTOSTART) {
             /* On | Off: two little buttons, the chosen one pressed in, in the accent */
-            int on = r->kind == SR_SFX ? cfg.sfx : r->kind == SR_MUSIC ? cfg.music : cfg.rumble;
+            int on = r->kind == SR_SFX ? cfg.sfx : r->kind == SR_MUSIC ? cfg.music : r->kind == SR_RUMBLE ? cfg.rumble : autostart_on();
             for (int q = 0; q < 2; q++) {
                 int bx = vx - 2 * 28 + q * 28 + 2, chosen = q == 0 ? on : !on;
                 if (chosen) {
