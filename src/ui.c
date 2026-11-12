@@ -447,7 +447,7 @@ static Img *game_logo(Game *g) {
 typedef struct { float spacing, cy; } RowGeo;
 static RowGeo geo(int v) { return v == V_NDS ? (RowGeo){ 54, 106 } : v == V_GBA ? (RowGeo){ 70, 106 } : (RowGeo){ 70, 103 }; }
 /* a cartridge's width in the middle and elsewhere: a DS card or a Game Pak (the favourites mix them) */
-static float sel_w_of(int csys) { return csys == SYS_NDS ? 60 : 82; }
+static float sel_w_of(int csys) { return csys == SYS_NDS ? 52 : 72; }
 static float oth_w_of(int csys) { return csys == SYS_NDS ? 36 : 48; }
 #define CONT_GAP 18                     /* the favourites: the space after "continue" */
 static float sel_w_now(int v) { Game *g = cur_game(v); return sel_w_of(g ? g->sys : (v == V_GBA ? SYS_GBA : SYS_NDS)); }
