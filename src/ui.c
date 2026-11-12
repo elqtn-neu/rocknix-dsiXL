@@ -3203,7 +3203,15 @@ int ui_frame(const Input *input, double dt, Surf *top, Surf *bot) {
     /* sleep: the power button, the lid closing (in the menu itself: not in the start-up or a launch) */
     int lid_opened = !input->lid && sl_lid_prev, lid_shut = input->lid && !sl_lid_prev;
     sl_lid_prev = input->lid;
-    /* (BananaOS: bananad puts it to sleep the moment the lid shuts and pauses the menu; only the waking is ours) */
+    /* (BananaOS: bananad puts it to sleep the moment the lid shuts and pauses the menu; only the waking is ours. On the
+     * charger it doesn't suspend, it keeps the handheld dark and awake with the menu paused; should the menu not be
+     * paused (it wasn't started by BananaOS's menu), it goes quiet and still by itself until the lid opens) */
+    if (cfg.banana) {
+        static int lid_quiet;
+        if (lid_shut && !lid_quiet) { lid_quiet = 1; music_fade(0, 0.2f); }
+        if (lid_opened && lid_quiet) { lid_quiet = 0; if (cfg.music) music_fade(0.55f, 0.8f); last_input = T; swallow = 1; }
+        if (lid_quiet) { in.held = 0; in.touch[0] = in.touch[1] = 0; return -1; }
+    }
     if (sl_state == SL_NONE && state == ST_MENU && !rg && !cfg.banana && (input->power || lid_shut)) sleep_start(lid_shut);
     if (sl_state == SL_GOING && T - sl_t >= sl_going_len()) sleep_now();
     if (sl_state == SL_ASLEEP) {

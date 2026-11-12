@@ -24,12 +24,6 @@ restart_ui() {
         kill -TERM $P
         i=0; while [ $i -lt 100 ] && kill -0 $P 2>/dev/null; do sleep 0.05; i=$((i + 1)); done
         if [ '$FIRST' = 1 ]; then i=0; while [ $i -lt 20 ]; do echo 0 > /data/banana/last-system; sleep 0.05; i=$((i + 1)); done; fi
-        # (the new banana-ui would start the DSi Menu again at once from banana/resume-boot, which the session just
-        # wrote for the next power-on: kept aside until it has started, then put back)
-        if [ -f /data/banana/resume-boot.dsixl ]; then
-            i=0; while [ $i -lt 100 ] && ! pidof banana-ui >/dev/null; do sleep 0.1; i=$((i + 1)); done
-            sleep 8; mv -f /data/banana/resume-boot.dsixl /data/banana/resume-boot; sync
-        fi
     ' >/dev/null 2>&1 < /dev/null &
 }
 # the bottom panel's backlight back on (the Ports runner turns it off: ports draw on the top panel only)
@@ -47,7 +41,7 @@ if [ "$1" = --uninstall ]; then
         # nothing of yours in it: BananaOS's own list again (so its updates' new systems show)
         cmp -s $SYS /etc/banana/systems.conf && rm -f $SYS
     fi
-    rm -f /data/banana/shaders/dsi-lcd.frag /data/banana/shaders/dsi-lcd-color.frag /data/banana/resume-boot.dsixl
+    rm -f /data/banana/shaders/dsi-lcd.frag /data/banana/shaders/dsi-lcd-color.frag
     grep -q '^rom=.*/dsixl/shelf/' /data/banana/resume-boot 2>/dev/null && rm -f /data/banana/resume-boot   # (no more starting in it)
     for f in $D/* $D/.[!.]*; do case ${f##*/} in media|sounds) ;; *) rm -rf "$f" ;; esac; done
     echo "Removed. Your art and sounds stay in $D (delete the folder to remove them too)."
@@ -99,8 +93,9 @@ case " $* " in
     # straight into it (the port's own run: Exit to BananaOS ends it), then BananaOS's menu again, on the DSi Menu
     bottom_on
     echo "opening it"
-    sh $D/session.sh
-    [ -f /data/banana/resume-boot ] && grep -q '^rom=.*/dsixl/shelf/' /data/banana/resume-boot && mv -f /data/banana/resume-boot /data/banana/resume-boot.dsixl
+    # BananaOS's menu opens it as it starts again (banana/resume-boot, as at power-on): as one of its own games, so
+    # bananad pauses it when the lid shuts, which it couldn't from inside this port
+    printf 'rom=%s\nemulator=\n' "$D/shelf/DSi Menu.app" > /data/banana/resume-boot; sync
     restart_ui first
     ;;
 esac
